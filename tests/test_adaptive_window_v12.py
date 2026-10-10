@@ -89,6 +89,21 @@ class VisualReadinessTests(unittest.TestCase):
                                                 sleep=clock.sleep,max_seconds=1,
                                                 quiet_seconds=.25,unchanged_grace=.7,poll=.1))
 
+    def test_fractional_visual_timeout_never_spins_forever(self):
+        clock=Clock()
+        calls=[0]
+        def tracked_sleep(duration):
+            calls[0]+=1
+            if calls[0]>100:
+                self.fail('Adaptive wait timed out but its fake clock never advances')
+            clock.sleep(duration)
+        def moving_sample():
+            return bytes([int(clock.t*100) % 256]*100)
+        self.assertFalse(wait_for_visual_settle(
+            moving_sample,clock=clock.now,sleep=tracked_sleep,
+            max_seconds=1,quiet_seconds=.25,unchanged_grace=.7,poll=.1))
+        self.assertLess(calls[0],30)
+
     def test_missing_capture_returns_fallback(self):
         self.assertFalse(wait_for_visual_settle(lambda:None))
 
