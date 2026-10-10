@@ -479,7 +479,11 @@ class Player(QThread):
                     action.kind == 'key' and action.key.lower() in
                     ('enter','f5','ctrl+r','alt+left','alt+right')
                 )
-                if navigation and not (next_action and next_action.kind == 'wait'):
+                # An adaptive check is most useful when the next action
+                # follows quickly. A longer user-edited delay already gives
+                # the UI settling time, and the final step needs no wait.
+                if (navigation and next_action and next_action.kind != 'wait'
+                        and next_action.delay < 0.75):
                     self._wait_for_visual_idle()
             self.finished_result.emit("Playback finished successfully.")
         except Stopped as ex:
