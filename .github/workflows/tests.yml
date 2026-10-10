@@ -1,17 +1,34 @@
 name: Core tests
+
 on:
   push:
   pull_request:
   workflow_dispatch:
+
 jobs:
   core:
+    name: Python Core Tests
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Check syntax
-        run: python -m compileall -q action_studio main.py
-      - name: Unit tests (GUI-independent)
-        run: python -m unittest discover -s tests -v
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install Pillow
+
+      - name: Check Python syntax
+        run: |
+          python -m compileall -q action_studio main.py
+
+      - name: Run unit tests
+        run: |
+          python -m unittest discover -s tests -v
