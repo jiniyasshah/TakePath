@@ -9,7 +9,8 @@ import time
 from PySide6.QtCore import QThread, Signal
 from .core import Action, interpolate_path, anchor_original_path
 from .recorder import foreground, center_cursor
-from .platform_api import window_pid, supported, focus_status
+from .platform_api import window_pid, supported, focus_status, title_of, named_control_available
+from .action_wait import wait_until_ready, contains_title, ConditionCancelled, ConditionTimeout
 from .replay_safety import ReplaySafetyError, wait_for_target_window, require_protected_field
 
 
@@ -76,6 +77,7 @@ class Player(QThread):
     paused_signal = Signal(bool)
     secure_input_requested = Signal()
     focus_waiting = Signal(bool)
+    readiness_waiting = Signal(bool)
 
     def __init__(self, actions: list[Action], target_hwnd: int, speed: float = 1.0,
                  cursor_mode: str = "smooth", center_at_start: bool = False,
@@ -293,13 +295,45 @@ class Player(QThread):
         # Continue only when the target app has focus again.
         self._guard()
 
+    def _readiness_check(self, a: Action) -> bool:
+        if a.wait_mode == "target_title":
+            self._guard()
+            return contains_title(title_of(self.target_hwnd), a.wait_value)
+        if a.wait_mode == "active_title":
+            self._guard()
+            return contains_title(title_of(foreground()), a.wait_value)
+        self._guard()
+        if a.wait_mode == "focused_safe":
+            return focus_status() == "safe"
+        if a.wait_mode == "focused_protected":
+            return focus_status() == "protected"
+        if a.wait_mode == "control_name":
+            return named_control_available(a.wait_value)
+        raise RuntimeError("Unknown Wait condition")
+
+    def _run_wait_action(self, a: Action):
+        if a.wait_mode in ("target_title", "active_title", "control_name") and not a.wait_value.strip():
+            raise RuntimeError("Wait condition needs a window or control name")
+        try:
+            wait_until_ready(
+                lambda: self._readiness_check(a),
+                timeout=a.wait_timeout,
+                cancel=self.abort.is_set,
+                paused=self.pause_flag.is_set,
+                status=self.readiness_waiting.emit,
+            )
+        except (ConditionCancelled, ConditionTimeout) as exc:
+            raise Stopped(f"Wait step: {exc}") from exc
+
     def _action(self, a: Action):
         import pyautogui as pg
         # Briefly tolerate the *same* window regaining focus between steps.
         # Never recover focus mid-click, mid-drag, or mid-keystroke.
         self._wait(a.delay / self.speed, recover_focus=True)
         self._guard(recover_focus=True)
-        if a.kind == "secure_input":
+        if a.kind == "wait":
+            self._run_wait_action(a)
+        elif a.kind == "secure_input":
             if a.secure_mode == 'manual':
                 self._protected_input()
             elif a.secure_mode == 'auto':
