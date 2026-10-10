@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=TakePath
+Comment=Record actions, edit mistakes and replay
+Exec=TakePath
+Icon=takepath
+Categories=AudioVideo;Utility;
+Terminal=false

@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "name": "Example · Browser tutorial",
+  "target_title": "Example window — edit before replay",
+  "screen_size": [
+    1920,
+    1080
+  ],
+  "screen_bounds": [
+    0,
+    0,
+    1920,
+    1080
+  ],
+  "actions": [
+    {
+      "kind": "click",
+      "delay": 0.8,
+      "enabled": true,
+      "id": "17a883195fe841089774f21fc7512240",
+      "x": 580,
+      "y": 180,
+      "end_x": 0,
+      "end_y": 0,
+      "button": "left",
+      "text": "",
+      "key": "enter",
+      "dx": 0,
+      "dy": 0,
+      "path_mode": "original",
+      "path_duration": 0.7,
+      "raw_path": [
+        [
+          200,
+          670,
+          0
+        ],
+        [
+          280,
+          590,
+          0.1
+        ],
+        [
+          390,
+          420,
+          0.25
+        ],
+        [
+          490,
+          280,
+          0.44
+        ],
+        [
+          580,
+          180,
+          0.7
+        ]
+      ],
+      "typing_mode": "human",
+      "char_delay": 0.055
+    },
+    {
+      "kind": "type",
+      "delay": 0.35,
+      "enabled": true,
+      "id": "abdba0c1462c42578ab45ebdcdecf803",
+      "x": 0,
+      "y": 0,
+      "end_x": 0,
+      "end_y": 0,
+      "button": "left",
+      "text": "How to inatall Python",
+      "key": "enter",
+      "dx": 0,
+      "dy": 0,
+      "path_mode": "smooth",
+      "path_duration": 0.32,
+      "raw_path": [],
+      "typing_mode": "human",
+      "char_delay": 0.075
+    },
+    {
+      "kind": "key",
+      "delay": 0.4,
+      "enabled": true,
+      "id": "c0d0473020834bffa786bb06baa1d7db",
+      "x": 0,
+      "y": 0,
+      "end_x": 0,
+      "end_y": 0,
+      "button": "left",
+      "text": "",
+      "key": "enter",
+      "dx": 0,
+      "dy": 0,
+      "path_mode": "smooth",
+      "path_duration": 0.32,
+      "raw_path": [],
+      "typing_mode": "human",
+      "char_delay": 0.055
+    },
+    {
+      "kind": "scroll",
+      "delay": 1.2,
+      "enabled": true,
+      "id": "92b6d6758ec04384ba26bdbd485d4165",
+      "x": 1150,
+      "y": 710,
+      "end_x": 0,
+      "end_y": 0,
+      "button": "left",
+      "text": "",
+      "key": "enter",
+      "dx": 0,
+      "dy": -4,
+      "path_mode": "smooth",
+      "path_duration": 0.32,
+      "raw_path": [],
+      "typing_mode": "human",
+      "char_delay": 0.055
+    },
+    {
+      "kind": "click",
+      "delay": 0.45,
+      "enabled": true,
+      "id": "475386477fd34f7b8c85decf9023ee8b",
+      "x": 830,
+      "y": 620,
+      "end_x": 0,
+      "end_y": 0,
+      "button": "left",
+      "text": "",
+      "key": "enter",
+      "dx": 0,
+      "dy": 0,
+      "path_mode": "smooth",
+      "path_duration": 0.5,
+      "raw_path": [
+        [
+          1110,
+          710,
+          0
+        ],
+        [
+          940,
+          700,
+          0.18
+        ],
+        [
+          830,
+          620,
+          0.5
+        ]
+      ],
+      "typing_mode": "human",
+      "char_delay": 0.055
+    },
+    {
+      "kind": "type",
+      "delay": 0.8,
+      "enabled": true,
+      "id": "4a40de10ce04456e8ba74e62db227c71",
+      "x": 0,
+      "y": 0,
+      "end_x": 0,
+      "end_y": 0,
+      "button": "left",
+      "text": "Fixed text is editable in the inspector!",
+      "key": "enter",
+      "dx": 0,
+      "dy": 0,
+      "path_mode": "smooth",
+      "path_duration": 0.32,
+      "raw_path": [],
+      "typing_mode": "human",
+      "char_delay": 0.055
+    }
+  ]
+}

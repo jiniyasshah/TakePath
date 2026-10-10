@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+/build/
+/dist/
+*.spec
+.env
+.env.*
+# Workflow files and screenshots may contain personal/private data.
+*.vas.json
+!examples/tutorial_demo.vas.json
+user_recordings/
+private/
+*.log
+.DS_Store
+Thumbs.db

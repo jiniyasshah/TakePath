@@ -1,0 +1,381 @@
+"""Interactive, stoppable playback in a worker thread."""
+from __future__ import annotations
+
+import ctypes
+import math
+import sys
+import threading
+import time
+from PySide6.QtCore import QThread, Signal
+from .core import Action, interpolate_path, anchor_original_path
+from .recorder import foreground, center_cursor
+from .platform_api import window_pid, supported
+
+
+def send_side_button(button: str, pressed: bool):
+    """Replay Windows auxiliary mouse buttons (XBUTTON1=Back, XBUTTON2=Forward).
+
+    PyAutoGUI may reject auxiliary names, so send genuine Win32 X-button
+    events using SendInput instead. This runs only on Windows.
+    """
+    if sys.platform != 'win32':
+        # Side-button support depends on the OS and input backend.
+        from pynput.mouse import Controller, Button
+        key = getattr(Button, button, None)
+        if key is None:
+            raise RuntimeError(f'{button} mouse button is not supported by this backend')
+        mouse = Controller()
+        (mouse.press if pressed else mouse.release)(key)
+        return
+    from ctypes import wintypes as wt
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_=[('dx',wt.LONG),('dy',wt.LONG),('mouseData',wt.DWORD),
+                  ('dwFlags',wt.DWORD),('time',wt.DWORD),('dwExtraInfo',ctypes.c_size_t)]
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_=[('wVk',wt.WORD),('wScan',wt.WORD),('dwFlags',wt.DWORD),
+                  ('time',wt.DWORD),('dwExtraInfo',ctypes.c_size_t)]
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_=[('uMsg',wt.DWORD),('wParamL',wt.WORD),('wParamH',wt.WORD)]
+    class INPUTUNION(ctypes.Union):
+        _fields_=[('mi',MOUSEINPUT),('ki',KEYBDINPUT),('hi',HARDWAREINPUT)]
+    class INPUT(ctypes.Structure):
+        _fields_=[('type',wt.DWORD),('data',INPUTUNION)]
+    if button not in ('x1','x2'):
+        raise ValueError(f'Not an auxiliary mouse button: {button}')
+    mouse_data=1 if button=='x1' else 2
+    flags=0x0080 if pressed else 0x0100  # MOUSEEVENTF_XDOWN / MOUSEEVENTF_XUP
+    event=INPUT(type=0,data=INPUTUNION(mi=MOUSEINPUT(0,0,mouse_data,flags,0,0)))
+    if ctypes.windll.user32.SendInput(1,ctypes.byref(event),ctypes.sizeof(event))!=1:
+        raise RuntimeError(f'Windows rejected {button} mouse event')
+
+
+def press_mouse(button: str):
+    if button in ('x1','x2'):
+        send_side_button(button,True)
+    else:
+        import pyautogui as pg
+        pg.mouseDown(button=button)
+
+
+def release_mouse(button: str):
+    if button in ('x1','x2'):
+        send_side_button(button,False)
+    else:
+        import pyautogui as pg
+        pg.mouseUp(button=button)
+
+
+class Stopped(Exception):
+    pass
+
+
+class Player(QThread):
+    progress = Signal(int)
+    finished_result = Signal(str)
+    paused_signal = Signal(bool)
+    secure_input_requested = Signal()
+
+    def __init__(self, actions: list[Action], target_hwnd: int, speed: float = 1.0,
+                 cursor_mode: str = "smooth", center_at_start: bool = False,
+                 parent=None, target_mode: str = "window", secure_values: dict[str, str] | None = None,
+                 typing_mode: str = "smooth", screen_bounds: list[int] | None = None):
+        super().__init__(parent)
+        self.actions = actions
+        self.target_hwnd = target_hwnd
+        self.target_mode = "screen" if target_mode == "screen" else "window"
+        self.speed = max(0.25, min(4, speed))
+        self.cursor_mode = cursor_mode if cursor_mode in ("smooth", "original", "straight", "gentle") else "smooth"
+        self.typing_mode = typing_mode if typing_mode in ("original", "smooth", "instant") else "smooth"
+        self.center_at_start = center_at_start
+        self.screen_bounds = list(screen_bounds) if screen_bounds else None
+        self.began_at = 0.0
+        self.paused_at = 0.0
+        self.pause_accumulated = 0.0
+        self.abort = threading.Event()
+        self.pause_flag = threading.Event()
+        self.key_guard = None
+        self.awaiting_secure_input = False
+        self.secure_values = dict(secure_values or {})
+
+    def cancel(self):
+        self.abort.set()
+        self.pause_flag.clear()
+
+    def toggle_pause(self):
+        if self.pause_flag.is_set():
+            self.pause_flag.clear()
+            self.awaiting_secure_input = False
+            if self.paused_at:
+                self.pause_accumulated += time.monotonic() - self.paused_at
+                self.paused_at = 0.0
+            self.paused_signal.emit(False)
+            return False
+        self.pause_flag.set()
+        self.paused_at = time.monotonic()
+        self.paused_signal.emit(True)
+        return True
+
+    def _wait(self, seconds: float):
+        elapsed = 0.0
+        while elapsed < seconds:
+            if self.abort.is_set():
+                raise Stopped("Playback stopped by user")
+            if self.pause_flag.is_set():
+                time.sleep(0.04)
+                continue
+            self._guard()
+            chunk = min(0.025, seconds - elapsed)
+            time.sleep(chunk)
+            elapsed += chunk
+
+    def _guard(self):
+        if self.abort.is_set():
+            raise Stopped("Playback stopped by user")
+        if self.target_mode == "window":
+            active = foreground()
+            # Strict window identity protects against injecting edited text or
+            # secrets into the wrong window of the same application.
+            if active != self.target_hwnd:
+                raise Stopped("Target window lost focus. Playback stopped to protect other applications.")
+        else:
+            # Screen mode can intentionally switch between Windows applications.
+            # Never type into our own editor if it takes foreground unexpectedly.
+            import os
+            hwnd = foreground()
+            if not hwnd or not window_pid(hwnd) or window_pid(hwnd) == os.getpid():
+                raise Stopped("Studio window received focus; screen replay stopped for safety.")
+
+    def _move(self, x: int, y: int):
+        import pyautogui as pg
+        self._guard()
+        pg.moveTo(x, y, duration=0)
+
+    def _straight_move(self, x: int, y: int, duration: float):
+        """Straight linear travel with a gentle ease-in/out, no curve."""
+        import pyautogui as pg
+        start = pg.position()
+        count = max(2, min(90, int(duration * 70)))
+        for i in range(1, count+1):
+            t = i/count
+            t = t*t*(3-2*t)
+            self._move(round(start.x+(x-start.x)*t), round(start.y+(y-start.y)*t))
+            self._wait(duration/count/self.speed)
+
+    def _gentle_move(self, x: int, y: int, duration: float):
+        """Near-straight subtle curved path, slower acceleration."""
+        import pyautogui as pg
+        start = pg.position()
+        dx,dy=x-start.x,y-start.y
+        count = max(2,min(90,int(duration*70)))
+        for i in range(1,count+1):
+            t=i/count
+            ease=t*t*t*(t*(6*t-15)+10)
+            bend=math.sin(math.pi*t)*0.035
+            self._move(round(start.x+dx*ease-dy*bend),round(start.y+dy*ease+dx*bend))
+            self._wait(duration/count/self.speed)
+
+    def _smooth_move(self, x: int, y: int, duration: float):
+        import pyautogui as pg
+        start = pg.position()
+        points = list(interpolate_path((start.x, start.y), (x, y), max(2, min(70, int(duration * 65)))))
+        for px, py in points:
+            self._guard()
+            self._move(px, py)
+            self._wait(duration / len(points) / self.speed)
+
+    def _original_move(self, path: list[list[float]], dest: tuple[int, int], duration: float):
+        if len(path) < 2:
+            return self._smooth_move(*dest, duration)
+        # Never teleport to an old recorded screen position. In particular,
+        # doing so undoes Center before replay and often jumps to the dock.
+        # Keep the original path shape, anchored at the actual current cursor,
+        # and taper the start offset to zero at the exact action destination.
+        import pyautogui as pg
+        initial = pg.position()
+        span = max(0.001, path[-1][2] - path[0][2])
+        prev = path[0][2]
+        for x, y, stamp in anchor_original_path(path, (initial.x, initial.y)):
+            self._wait((max(0, stamp - prev) / span) * duration / self.speed)
+            self._move(x, y)
+            prev = stamp
+        self._move(*dest)
+
+    def _cursor(self, a: Action, x: int, y: int):
+        duration = a.path_duration
+        if self.cursor_mode == "original" and a.raw_path:
+            self._original_move(a.raw_path, (x, y), duration)
+        elif self.cursor_mode == "straight":
+            self._straight_move(x, y, duration)
+        elif self.cursor_mode == "gentle":
+            self._gentle_move(x, y, duration)
+        else:
+            self._smooth_move(x, y, duration)
+
+    def _unicode_type(self, text: str, char_delay: float):
+        """Send UTF-16 Unicode keystrokes without modifying clipboard."""
+        if sys.platform != 'win32':
+            from pynput.keyboard import Controller
+            keyboard = Controller()
+            for char in text:
+                self._guard()
+                keyboard.type(char)
+                if char_delay:
+                    self._wait(char_delay / self.speed)
+            return
+        import ctypes.wintypes as wt
+        ULONG_PTR = wt.WPARAM
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wt.WORD), ("wScan", wt.WORD), ("dwFlags", wt.DWORD),
+                        ("time", wt.DWORD), ("dwExtraInfo", ULONG_PTR)]
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [("dx", wt.LONG), ("dy", wt.LONG), ("mouseData", wt.DWORD),
+                        ("dwFlags", wt.DWORD), ("time", wt.DWORD), ("dwExtraInfo", ULONG_PTR)]
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [("uMsg", wt.DWORD), ("wParamL", wt.WORD), ("wParamH", wt.WORD)]
+        class U(ctypes.Union):
+            _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wt.DWORD), ("union", U)]
+        send = ctypes.windll.user32.SendInput
+        raw = text.encode('utf-16-le')
+        for index in range(0, len(raw), 2):
+            self._guard()
+            scancode = raw[index] | (raw[index + 1] << 8)
+            for flags in (0x0004, 0x0004 | 0x0002):
+                inp = INPUT(type=1, union=U(ki=KEYBDINPUT(0, scancode, flags, 0, 0)))
+                if send(1, ctypes.byref(inp), ctypes.sizeof(inp)) != 1:
+                    raise RuntimeError("Windows rejected a Unicode keystroke")
+            if char_delay:
+                self._wait(char_delay / self.speed)
+
+    def _recorded_type(self, text: str, timings: list[float], smooth_delay: float):
+        """Honor recorded timing when it still matches the edited text."""
+        if len(timings) != len(text) or not timings:
+            return self._unicode_type(text, smooth_delay)
+        previous=timings[0]
+        for i,ch in enumerate(text):
+            if i:
+                self._wait(min(4.0,max(0.0,timings[i]-previous))/self.speed)
+                previous=timings[i]
+            self._unicode_type(ch, 0)
+
+    def _protected_input(self):
+        """Pause the workflow for manual password entry, without storing it."""
+        self.awaiting_secure_input = True
+        self.pause_flag.set()
+        self.paused_at = time.monotonic()
+        self.secure_input_requested.emit()
+        self.paused_signal.emit(True)
+        while self.pause_flag.is_set():
+            if self.abort.is_set():
+                raise Stopped("Playback stopped by user")
+            time.sleep(0.04)
+        self.awaiting_secure_input = False
+        # Continue only when the target app has focus again.
+        self._guard()
+
+    def _action(self, a: Action):
+        import pyautogui as pg
+        self._wait(a.delay / self.speed)
+        self._guard()
+        if a.kind == "secure_input":
+            if a.secure_mode == 'manual':
+                self._protected_input()
+            elif a.secure_mode == 'auto':
+                # Only memory-resident values. Never use the clipboard or
+                # insert sensitive text into project actions or logs.
+                secret = self.secure_values.pop(a.id, None)
+                if secret is None:
+                    raise RuntimeError('Secure input is missing; replay stopped safely.')
+                self._unicode_type(secret, 0.0 if self.typing_mode == 'instant' else a.char_delay)
+                del secret
+            # skip intentionally does nothing
+
+        elif a.kind == "click":
+            self._cursor(a, a.x, a.y)
+            if a.button in ('x1','x2'):
+                press_mouse(a.button)
+                release_mouse(a.button)
+            else:
+                pg.click(button=a.button)
+        elif a.kind == "drag":
+            self._smooth_move(a.x, a.y, 0.18)
+            self._guard()
+            press_mouse(a.button)
+            try:
+                if self.cursor_mode == 'original' and len(a.raw_path) > 1:
+                    self._original_move(a.raw_path, (a.end_x, a.end_y), a.path_duration)
+                else:
+                    self._cursor(a,a.end_x,a.end_y)
+            finally:
+                release_mouse(a.button)
+        elif a.kind == "scroll":
+            self._smooth_move(a.x, a.y, 0.15)
+            steps = max(abs(a.dy), abs(a.dx), 1)
+            for i in range(steps):
+                self._guard()
+                if i < abs(a.dy):
+                    pg.scroll(1 if a.dy > 0 else -1)
+                if i < abs(a.dx):
+                    pg.hscroll(1 if a.dx > 0 else -1)
+                self._wait(.025 / self.speed)
+        elif a.kind == "type":
+            if self.typing_mode == 'instant':
+                self._unicode_type(a.text,0)
+            elif self.typing_mode == 'original':
+                self._recorded_type(a.text,a.char_timings,a.char_delay)
+            else:
+                self._unicode_type(a.text,a.char_delay)
+        elif a.kind == "key":
+            keys = a.key.lower().split('+')
+            allowed = set(pg.KEYBOARD_KEYS)
+            if any(k not in allowed for k in keys):
+                raise ValueError(f"Unsupported keyboard shortcut: {a.key}")
+            self._guard()
+            if len(keys) > 1:
+                pg.hotkey(*keys)
+            else:
+                pg.press(keys[0])
+
+    def run(self):
+        try:
+            ok, reason = supported()
+            if not ok:
+                raise RuntimeError(reason)
+            import pyautogui as pg
+            from pynput import keyboard
+            pg.FAILSAFE = True
+            pg.PAUSE = 0.0
+            self._guard()
+            if self.center_at_start:
+                if self.target_mode == 'screen' and self.screen_bounds:
+                    x,y,w,h=self.screen_bounds
+                    from .platform_api import center_cursor as center_native
+                    centered = center_native(self.target_hwnd, (x,y,w,h))
+                else:
+                    centered = center_cursor(self.target_hwnd)
+                if not centered:
+                    raise RuntimeError('Windows could not center the mouse in the target')
+            self.began_at = time.monotonic()
+            def hotkey(key):
+                if key == keyboard.Key.f8:
+                    self.cancel()
+                elif key == keyboard.Key.f7:
+                    self.toggle_pause()
+            self.key_guard = keyboard.Listener(on_press=hotkey)
+            self.key_guard.start()
+            for i, action in enumerate(self.actions):
+                if not action.enabled:
+                    continue
+                self._guard()
+                self.progress.emit(i)
+                self._action(action)
+            self.finished_result.emit("Playback finished successfully.")
+        except Stopped as ex:
+            self.finished_result.emit(str(ex))
+        except Exception as ex:
+            self.finished_result.emit(f"Playback stopped: {ex}")
+        finally:
+            self.secure_values.clear()
+            if self.key_guard:
+                self.key_guard.stop()
