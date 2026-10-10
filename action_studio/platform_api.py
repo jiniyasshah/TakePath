@@ -350,3 +350,25 @@ def focus_status() -> str:
         return 'safe'
     except Exception:
         return 'unknown'
+
+
+def named_control_available(name: str) -> bool:
+    """Whether a visible enabled control with this name exists in focused window.
+
+    Windows UIA only. No clicking, text retrieval, or focus switching.
+    Other platforms deliberately reject this advanced mode for now.
+    """
+    if sys.platform != 'win32':
+        raise RuntimeError("Named-control waits currently require Windows UI Automation")
+    if not name or not name.strip():
+        raise ValueError("Control name cannot be blank")
+    try:
+        import uiautomation as auto
+        with auto.UIAutomationInitializerInThread():
+            focused = auto.GetForegroundControl()
+            if focused is None:
+                return False
+            control = focused.Control(Name=name, searchDepth=8)
+            return bool(control.Exists(0, 0) and control.IsEnabled and not control.IsOffscreen)
+    except (OSError, AttributeError, RuntimeError):
+        return False
