@@ -10,7 +10,8 @@ import math
 from pathlib import Path
 import uuid
 
-KINDS = {"click", "type", "key", "scroll", "drag", "secure_input"}
+KINDS = {"click", "type", "key", "scroll", "drag", "secure_input", "wait"}
+WAIT_MODES = {"target_title", "active_title", "focused_safe", "focused_protected", "control_name"}
 MODES = {"original", "smooth", "straight", "gentle"}
 TEXT_MODES = {"human", "instant", "original", "smooth"}
 GLOBAL_TYPING_MODES = {"original", "smooth", "instant"}
@@ -57,6 +58,9 @@ class Action:
     char_timings: list[float] = field(default_factory=list)  # Non-secret relative typing rhythm
     secure_mode: str = "auto"       # auto, manual or skip; never a password
     secure_ref: str = ""             # Opaque reference to Windows Credential Manager
+    wait_mode: str = "target_title"   # Explicit no-input readiness checkpoint
+    wait_value: str = ""             # Window/control name only; no secrets
+    wait_timeout: float = 15.0       # Wall-clock seconds, not playback speed
 
     @classmethod
     def from_dict(cls, obj: dict) -> 'Action':
@@ -67,6 +71,9 @@ class Action:
             if key in obj:
                 setattr(defaults, key, obj[key])
         defaults.delay = finite_range(defaults.delay, 0, 600)
+        defaults.wait_timeout = finite_range(defaults.wait_timeout, 0.5, 120)
+        defaults.wait_mode = defaults.wait_mode if defaults.wait_mode in WAIT_MODES else "target_title"
+        defaults.wait_value = str(defaults.wait_value).strip()[:160]
         defaults.path_duration = finite_range(defaults.path_duration, 0, 20)
         defaults.char_delay = finite_range(defaults.char_delay, 0, 2)
         defaults.enabled = bool(defaults.enabled)
@@ -109,6 +116,16 @@ class Action:
             return f"{ {'x1': 'Back', 'x2': 'Forward'}.get(self.button, self.button.title())} click at {self.x}, {self.y}"
         if self.kind == "secure_input":
             return {"auto": "Protected input · auto-fill", "manual": "Protected input · manual entry", "skip": "Protected input · skip"}.get(self.secure_mode, "Secure input")
+        if self.kind == "wait":
+            what = {
+                "target_title": "Target window title",
+                "active_title": "Active window title",
+                "focused_safe": "Focused unprotected control",
+                "focused_protected": "Focused password field",
+                "control_name": "Named control (Windows UIA)",
+            }.get(self.wait_mode, "Window title")
+            detail = f" · {self.wait_value[:58]}" if self.wait_value else ""
+            return f"Wait for {what}{detail} · max {self.wait_timeout:.1f}s"
         if self.kind == "type":
             shortened = self.text.replace("\n", " ↵ ")
             return shortened[:64] + ("…" if len(shortened) > 64 else "") or "(empty text)"
