@@ -19,6 +19,20 @@ MAX_ACTIONS = 12000
 MAX_POINTS = 450
 MAX_TEXT = 16000
 
+def is_repeatable_key(name: str, char: str | None, modifiers: set[str]) -> bool:
+    """Allow OS key-repeat for typing/editing, but not repeating shortcuts.
+
+    pynput reports auto-repeat as additional key-down callbacks without a
+    corresponding key-up. Dropping all duplicate downs loses held Backspace,
+    arrows and character input. Modifier shortcuts are kept one-shot.
+    """
+    if modifiers.intersection({'ctrl', 'alt', 'win'}):
+        return False
+    if name in {'backspace', 'delete', 'left', 'right', 'up', 'down',
+                'home', 'end', 'pgup', 'pgdn', 'space'}:
+        return True
+    return bool(isinstance(char, str) and len(char) == 1 and char.isprintable())
+
 
 @dataclass
 class Action:
@@ -260,8 +274,10 @@ class ActionBuilder:
         self.text_start = 0.0
         self.text_last = 0.0
         self.text_active = False
-        self.drag_start: tuple[int, int, float] | None = None
-        self.drag_points: list[list[float]] = []
+        # Track each pressed mouse button separately. A single shared drag
+        # slot mismatched releases when e.g. Left and Right overlapped.
+        self.button_presses: dict[str, tuple[int, int, float]] = {}
+        self.button_paths: dict[str, list[list[float]]] = {}
         self.secure_active = False
 
     def _append(self, action: Action, stamp: float):
@@ -320,9 +336,12 @@ class ActionBuilder:
         self._append(Action(kind="key", key=key), stamp)
 
     def move(self, x: int, y: int, stamp: float):
-        if self.drag_start:
-            if not self.drag_points or stamp - self.drag_points[-1][2] > 0.014:
-                self.drag_points.append([x, y, stamp])
+        if self.button_presses:
+            for button, path in self.button_paths.items():
+                if not path or stamp - path[-1][2] > 0.014:
+                    path.append([x, y, stamp])
+                    if len(path) > 500:
+                        self.button_paths[button] = path[::2]
             return
         if not self.move_points or (
             stamp - self.move_points[-1][2] > 0.018 and
@@ -332,24 +351,40 @@ class ActionBuilder:
         if len(self.move_points) > 500:
             self.move_points = self.move_points[::2]
 
-    def mouse_down(self, x: int, y: int, stamp: float):
+    def mouse_down(self, x: int, y: int, stamp: float, button: str | None = None):
+        # Legacy ActionBuilder callers supplied only position and time. Keep
+        # accepting those releases without weakening identity for actual
+        # recorder events (which always specify the pressed button).
+        button = button if button is not None else '_legacy_unspecified'
+        if button not in {'left', 'right', 'middle', 'x1', 'x2', '_legacy_unspecified'}:
+            return
+        # Ignore duplicate DOWN notifications for an already held button.
+        if button in self.button_presses:
+            return
         self.flush_text()
         self.leave_protected_input()
-        self.drag_start = (x, y, stamp)
-        self.drag_points = [[x, y, stamp]]
+        self.button_presses[button] = (x, y, stamp)
+        self.button_paths[button] = [[x, y, stamp]]
+
+    def cancel_button(self, button: str):
+        """Discard one incomplete press without affecting other held buttons."""
+        self.button_presses.pop(button, None)
+        self.button_paths.pop(button, None)
 
     def mouse_up(self, x: int, y: int, button: str, stamp: float):
-        if not self.drag_start:
+        held_button = button if button in self.button_presses else '_legacy_unspecified'
+        press = self.button_presses.pop(held_button, None)
+        path = self.button_paths.pop(held_button, None)
+        if press is None or path is None:
             return
-        sx, sy, press_stamp = self.drag_start
-        self.drag_start = None
-        self.drag_points.append([x, y, stamp])
+        sx, sy, press_stamp = press
+        path.append([x, y, stamp])
         moved = math.hypot(x - sx, y - sy) >= 12
         if moved:
             # Path covers cursor motion while button held down.
-            path = self._export_path(self.drag_points, self.drag_points[0][2])
+            exported = self._export_path(path, path[0][2])
             action = Action(kind="drag", x=sx, y=sy, end_x=x, end_y=y,
-                            button=button, raw_path=path,
+                            button=button, raw_path=exported,
                             path_duration=round(min(10.0, stamp - press_stamp), 3))
         else:
             points = self.move_points + [[sx, sy, press_stamp]]
@@ -365,7 +400,6 @@ class ActionBuilder:
         else:
             self._append(action, press_stamp)
             self.last_time = stamp
-        self.drag_points = []
         self.move_points = []
 
     @staticmethod

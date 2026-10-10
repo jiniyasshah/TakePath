@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from PySide6.QtCore import QObject, Signal
-from .core import ActionBuilder
+from .core import ActionBuilder, is_repeatable_key
 from .platform_api import activate_target_window, window_pid, focus_status, supported
 
 
@@ -186,19 +186,18 @@ class Recorder(QObject):
                 self.builder.move(round(x), round(y), self._stamp())
 
     def _click(self, x, y, button, pressed):
+        value = str(button).split('.')[-1]
+        if value not in {"left", "right", "middle", "x1", "x2"}:
+            return
         if not self._inside_at(x, y):
             if not pressed and self.builder is not None:
                 with self.lock:
-                    self.builder.drag_start = None
-                    self.builder.drag_points = []
-            return
-        value = str(button).split('.')[-1]
-        if value not in {"left", "right", "middle", "x1", "x2"}:
+                    self.builder.cancel_button(value)
             return
         with self.lock:
             if self.active:
                 if pressed:
-                    self.builder.mouse_down(round(x), round(y), self._stamp())
+                    self.builder.mouse_down(round(x), round(y), self._stamp(), value)
                 else:
                     self.builder.mouse_up(round(x), round(y), value, self._stamp())
 
@@ -255,7 +254,7 @@ class Recorder(QObject):
                 return
             char = getattr(key, 'char', None)
             key_id = name or str(char)
-            if key_id in self.pressed_keys:
+            if key_id in self.pressed_keys and not is_repeatable_key(name, char, self.modifiers):
                 return
             self.pressed_keys.add(key_id)
             focus_status = self._focus_status()
