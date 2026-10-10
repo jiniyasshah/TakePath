@@ -3,7 +3,7 @@ pynput>=1.7.7,<2
 PyAutoGUI>=0.9.54,<1
 mss>=9,<11
 keyring>=25,<27
-Pillow>=10.0.0
+Pillow>=10,<13
 uiautomation>=2.0,<3; sys_platform == 'win32'
 python-xlib>=0.33,<1; sys_platform == 'linux'
 pyobjc-framework-Cocoa>=10,<13; sys_platform == 'darwin'

@@ -35,7 +35,7 @@ class PortabilityTests(unittest.TestCase):
         self.assertGreater((ROOT/'assets/takepath.icns').stat().st_size, 1000)
 
     def test_release_workflow_builds_on_each_os(self):
-        workflow=(ROOT/'.github/workflows/release.yml').read_text()
+        workflow=(ROOT/'.github/workflows/release.yml').read_text(encoding="utf-8")
         for expected in ('windows-latest','macos-15','ubuntu-22.04',
                          'TakePath-linux-x64.AppImage','TakePath-windows-x64.exe',
                          'TakePath-macos-${{ matrix.arch }}.dmg','softprops/action-gh-release',

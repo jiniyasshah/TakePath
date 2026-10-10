@@ -27,7 +27,7 @@ class SecureInputV6Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'test.vas.json'
             save_project(project,path)
-            self.assertNotIn(password,path.read_text())
+            self.assertNotIn(password,path.read_text(encoding="utf-8"))
             self.assertEqual(load_project(path).actions[0].text,'')
             self.assertEqual(load_project(path).actions[0].key,'enter')
 
@@ -56,7 +56,7 @@ class SecureInputV6Tests(unittest.TestCase):
         self.assertEqual(validate_password('long and complex 🍉'),'long and complex 🍉')
 
     def test_editor_has_secure_input_modes_and_preflight(self):
-        ui=(ROOT/'action_studio/ui.py').read_text()
+        ui=(ROOT/'action_studio/ui.py').read_text(encoding="utf-8")
         self.assertIn("addItem('Auto-fill', 'auto')",ui)
         self.assertIn("addItem('Manual in target app', 'manual')",ui)
         self.assertIn("addItem('Skip', 'skip')",ui)
@@ -67,7 +67,7 @@ class SecureInputV6Tests(unittest.TestCase):
         self.assertIn('Convert to secure input',ui)
 
     def test_only_explicit_manual_secure_steps_pause_player(self):
-        playback=(ROOT/'action_studio/playback.py').read_text()
+        playback=(ROOT/'action_studio/playback.py').read_text(encoding="utf-8")
         self.assertIn("if a.secure_mode == 'manual':",playback)
         self.assertIn("elif a.secure_mode == 'auto':",playback)
         self.assertIn('self.secure_values.pop(a.id, None)',playback)

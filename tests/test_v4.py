@@ -27,34 +27,34 @@ class VersionFourTests(unittest.TestCase):
         self.assertEqual(Action.from_dict(vars(action)).button,'left')
 
     def test_editor_new_capture_only_returns_to_dock(self):
-        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text()
+        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text(encoding="utf-8")
         self.assertIn("B('New capture',self.prepare_new_capture",src)
         action=src.split('    def prepare_new_capture(self):',1)[1].split('    def start_recording(self):',1)[0]
         self.assertIn('self.show_dock()',action)
         self.assertNotIn("self._arm('record')",action)
 
     def test_player_completion_does_not_open_editor(self):
-        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text()
+        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text(encoding="utf-8")
         completion=src.split('    def _play_thread_done(self):',1)[1].split('    def _record_pause_status(self,paused):',1)[0]
         self.assertIn('self.playback_completed=success',completion)
         self.assertNotIn('show_editor',completion)
         self.assertIn('Open editor',src)
 
     def test_optional_preview_presets_and_default_priority(self):
-        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text()
+        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text(encoding="utf-8")
         self.assertIn("self.preview_mode='hidden'",src)
         self.assertIn("('hidden','Hide map')",src)
         self.assertIn("('expanded','Large map')",src)
         self.assertIn('body.setSizes([150,700])',src)
 
     def test_side_button_win32_playback_is_supported(self):
-        src=(Path(__file__).resolve().parents[1]/'action_studio'/'playback.py').read_text()
+        src=(Path(__file__).resolve().parents[1]/'action_studio'/'playback.py').read_text(encoding="utf-8")
         self.assertIn('def send_side_button(',src)
         self.assertIn('0x0080 if pressed else 0x0100',src)
         self.assertIn("if a.button in ('x1','x2'):",src)
 
     def test_dock_top_center_default(self):
-        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text()
+        src=(Path(__file__).resolve().parents[1]/'action_studio'/'ui.py').read_text(encoding="utf-8")
         self.assertIn("'dock_location','top'",src)
         self.assertIn("screen.top()+margin",src)
         self.assertIn('class RecordOrb(QPushButton):',src)

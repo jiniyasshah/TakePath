@@ -39,7 +39,7 @@ class VersionFiveTests(unittest.TestCase):
         self.assertIn('Protected input',loaded.actions[0].label())
 
     def test_records_password_marker_without_secret(self):
-        src=REC.read_text()
+        src=REC.read_text(encoding="utf-8")
         self.assertIn('focus_status()',src)
         backend=(Path(__file__).resolve().parents[1]/'action_studio/platform_api.py').read_text(encoding='utf-8')
         self.assertIn("'protected' if bool(ctrl.IsPassword)",backend)
@@ -48,7 +48,7 @@ class VersionFiveTests(unittest.TestCase):
         self.assertNotIn('self.builder.char(char, self._stamp())',src)
 
     def test_editor_replay_is_staged(self):
-        src=UI.read_text()
+        src=UI.read_text(encoding="utf-8")
         self.assertIn("B('▶  Replay',self.prepare_replay",src)
         prepare=src.split('    def prepare_replay(self):',1)[1].split('    def start_playback(self):',1)[0]
         self.assertIn('self.replay_ready=True',prepare)
@@ -61,7 +61,7 @@ class VersionFiveTests(unittest.TestCase):
         self.assertIn('self.primary_stack.setCurrentIndex(1 if ready else 0)',src)
 
     def test_player_pauses_at_protected_marker(self):
-        src=PLAYER.read_text()
+        src=PLAYER.read_text(encoding="utf-8")
         block=src.split('    def _protected_input(self):',1)[1].split('    def _action(self, a: Action):',1)[0]
         self.assertIn('self.pause_flag.set()',block)
         self.assertIn('self.secure_input_requested.emit()',block)
@@ -69,7 +69,7 @@ class VersionFiveTests(unittest.TestCase):
         self.assertIn('self._guard()',block)
 
     def test_new_capture_exits_replay_ready(self):
-        src=UI.read_text()
+        src=UI.read_text(encoding="utf-8")
         prepare=src.split('    def prepare_new_capture(self):',1)[1].split('    def start_recording(self):',1)[0]
         self.assertIn('self.replay_ready=False',prepare)
         self.assertIn('self.show_dock()',prepare)

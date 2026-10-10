@@ -45,7 +45,7 @@ class VersionSevenTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             target=Path(d)/'test.vas.json'
             save_project(Project(actions=[item]),target)
-            content=target.read_text()
+            content=target.read_text(encoding="utf-8")
             self.assertNotIn('password',content)
             self.assertEqual(load_project(target).actions[0].char_timings,[])
 
@@ -67,7 +67,7 @@ class VersionSevenTests(unittest.TestCase):
             self.assertEqual(len(entries[0][1]),4)
 
     def test_editor_layout_and_actual_targets(self):
-        ui=(ROOT/'action_studio/ui.py').read_text()
+        ui=(ROOT/'action_studio/ui.py').read_text(encoding="utf-8")
         self.assertIn("self.target_chevron.setPixmap(vector_icon('chevron'",ui)
         self.assertIn('open_windows()',ui)
         self.assertIn("menu.addSection('SCREENS')",ui)
@@ -75,7 +75,7 @@ class VersionSevenTests(unittest.TestCase):
         self.assertIn('main_row.addWidget(inspector)',ui)
         self.assertIn("self.preview_mode='hidden'",ui)
         self.assertIn("self.global_typing.addItems(['Original','Smooth','Instant'])",ui)
-        playback=(ROOT/'action_studio/playback.py').read_text()
+        playback=(ROOT/'action_studio/playback.py').read_text(encoding="utf-8")
         for name in ('_straight_move','_gentle_move','_original_move','_recorded_type'):
             self.assertIn(f'def {name}',playback)
 

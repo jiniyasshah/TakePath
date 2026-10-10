@@ -26,7 +26,7 @@ class V10Tests(unittest.TestCase):
         self.assertEqual(item.project.actions[0].x,55)
 
     def test_no_automatic_disk_writes_or_password_serialization(self):
-        self.assertNotIn('save_project', (ROOT/'action_studio'/'retakes.py').read_text())
+        self.assertNotIn('save_project', (ROOT/'action_studio'/'retakes.py').read_text(encoding="utf-8"))
         project=Project(actions=[Action(kind='secure_input',text='example-secret')])
         history=RetakeHistory();history.capture(project,None,True,{'ref':'example-secret'})
         self.assertNotIn('example-secret',str(history.restore().project.to_dict()))
@@ -52,7 +52,7 @@ class V10Tests(unittest.TestCase):
     def test_brand_and_installer_assets(self):
         self.assertTrue((ROOT/'assets'/'takepath.ico').is_file())
         self.assertTrue((ROOT/'assets'/'takepath-icon.png').is_file())
-        build=(ROOT/'build_windows_exe.bat').read_text()
+        build=(ROOT/'build_windows_exe.bat').read_text(encoding="utf-8")
         self.assertIn('--icon "assets\\takepath.ico"',build)
         self.assertIn('--add-data "assets;assets"',build)
         self.assertIn("brandbox.addWidget(L('TakePath','brand'))",UI)

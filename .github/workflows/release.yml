@@ -2,7 +2,7 @@ name: Cross-platform Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,11 +10,13 @@ jobs:
   windows:
     name: Windows x64
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           architecture: x64
       - name: Install dependencies
         run: python -m pip install -r requirements.txt "pyinstaller>=6,<7"
@@ -62,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - name: Dependencies
         run: python -m pip install -r requirements.txt 'pyinstaller>=6,<7'
       - name: Tests
@@ -90,7 +92,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - name: Linux runtime packages
         run: |
           sudo apt-get update
@@ -132,7 +134,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: '*-assets'
+          pattern: "*-assets"
           path: release
           merge-multiple: true
       - name: SHA256 manifest
