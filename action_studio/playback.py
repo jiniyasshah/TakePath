@@ -9,7 +9,8 @@ import time
 from PySide6.QtCore import QThread, Signal
 from .core import Action, interpolate_path, anchor_original_path
 from .recorder import foreground, center_cursor
-from .platform_api import window_pid, supported
+from .platform_api import window_pid, supported, focus_status
+from .replay_safety import ReplaySafetyError, wait_for_target_window, require_protected_field
 
 
 def send_side_button(button: str, pressed: bool):
@@ -74,6 +75,7 @@ class Player(QThread):
     finished_result = Signal(str)
     paused_signal = Signal(bool)
     secure_input_requested = Signal()
+    focus_waiting = Signal(bool)
 
     def __init__(self, actions: list[Action], target_hwnd: int, speed: float = 1.0,
                  cursor_mode: str = "smooth", center_at_start: bool = False,
@@ -115,7 +117,7 @@ class Player(QThread):
         self.paused_signal.emit(True)
         return True
 
-    def _wait(self, seconds: float):
+    def _wait(self, seconds: float, *, recover_focus: bool = False):
         elapsed = 0.0
         while elapsed < seconds:
             if self.abort.is_set():
@@ -123,12 +125,12 @@ class Player(QThread):
             if self.pause_flag.is_set():
                 time.sleep(0.04)
                 continue
-            self._guard()
+            self._guard(recover_focus=recover_focus)
             chunk = min(0.025, seconds - elapsed)
             time.sleep(chunk)
             elapsed += chunk
 
-    def _guard(self):
+    def _guard(self, *, recover_focus: bool = False):
         if self.abort.is_set():
             raise Stopped("Playback stopped by user")
         if self.target_mode == "window":
@@ -136,7 +138,20 @@ class Player(QThread):
             # Strict window identity protects against injecting edited text or
             # secrets into the wrong window of the same application.
             if active != self.target_hwnd:
-                raise Stopped("Target window lost focus. Playback stopped to protect other applications.")
+                if recover_focus:
+                    try:
+                        wait_for_target_window(
+                            self.target_hwnd, foreground, timeout=2.0,
+                            cancelled=self.abort.is_set, paused=self.pause_flag.is_set,
+                            status=self.focus_waiting.emit,
+                        )
+                    except ReplaySafetyError as exc:
+                        raise Stopped(str(exc)) from exc
+                else:
+                    raise Stopped(
+                        "The selected window lost focus during an action. "
+                        "Playback stopped to protect other applications."
+                    )
         else:
             # Screen mode can intentionally switch between Windows applications.
             # Never type into our own editor if it takes foreground unexpectedly.
@@ -211,13 +226,15 @@ class Player(QThread):
         else:
             self._smooth_move(x, y, duration)
 
-    def _unicode_type(self, text: str, char_delay: float):
+    def _unicode_type(self, text: str, char_delay: float, *, protected: bool = False):
         """Send UTF-16 Unicode keystrokes without modifying clipboard."""
         if sys.platform != 'win32':
             from pynput.keyboard import Controller
             keyboard = Controller()
             for char in text:
                 self._guard()
+                if protected:
+                    require_protected_field(focus_status)
                 keyboard.type(char)
                 if char_delay:
                     self._wait(char_delay / self.speed)
@@ -240,6 +257,8 @@ class Player(QThread):
         raw = text.encode('utf-16-le')
         for index in range(0, len(raw), 2):
             self._guard()
+            if protected:
+                require_protected_field(focus_status)
             scancode = raw[index] | (raw[index + 1] << 8)
             for flags in (0x0004, 0x0004 | 0x0002):
                 inp = INPUT(type=1, union=U(ki=KEYBDINPUT(0, scancode, flags, 0, 0)))
@@ -276,8 +295,10 @@ class Player(QThread):
 
     def _action(self, a: Action):
         import pyautogui as pg
-        self._wait(a.delay / self.speed)
-        self._guard()
+        # Briefly tolerate the *same* window regaining focus between steps.
+        # Never recover focus mid-click, mid-drag, or mid-keystroke.
+        self._wait(a.delay / self.speed, recover_focus=True)
+        self._guard(recover_focus=True)
         if a.kind == "secure_input":
             if a.secure_mode == 'manual':
                 self._protected_input()
@@ -287,7 +308,13 @@ class Player(QThread):
                 secret = self.secure_values.pop(a.id, None)
                 if secret is None:
                     raise RuntimeError('Secure input is missing; replay stopped safely.')
-                self._unicode_type(secret, 0.0 if self.typing_mode == 'instant' else a.char_delay)
+                # Passwords must not be inserted unless OS accessibility
+                # verifies a protected field. Recheck during injection so a
+                # focus change cannot silently redirect later characters.
+                self._guard()
+                require_protected_field(focus_status)
+                self._unicode_type(secret, 0.0 if self.typing_mode == 'instant' else a.char_delay,
+                                   protected=True)
                 del secret
             # skip intentionally does nothing
 
@@ -346,7 +373,7 @@ class Player(QThread):
             from pynput import keyboard
             pg.FAILSAFE = True
             pg.PAUSE = 0.0
-            self._guard()
+            self._guard(recover_focus=True)
             if self.center_at_start:
                 if self.target_mode == 'screen' and self.screen_bounds:
                     x,y,w,h=self.screen_bounds
@@ -367,7 +394,7 @@ class Player(QThread):
             for i, action in enumerate(self.actions):
                 if not action.enabled:
                     continue
-                self._guard()
+                self._guard(recover_focus=True)
                 self.progress.emit(i)
                 self._action(action)
             self.finished_result.emit("Playback finished successfully.")
