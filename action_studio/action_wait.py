@@ -56,7 +56,10 @@ def wait_until_ready(
             if paused():
                 sleep(min(poll, 0.05))
                 continue
-            if remaining <= 0:
+            # A simulated (or real) clock cannot advance by a floating-point
+            # remainder smaller than its resolution. Treat this as timed out
+            # rather than busy-looping forever on a zero-progress sleep.
+            if remaining <= 1e-6:
                 raise ConditionTimeout("Wait condition was not met before its timeout")
             if check():
                 successes += 1

@@ -9,7 +9,9 @@ import time
 from PySide6.QtCore import QThread, Signal
 from .core import Action, interpolate_path, anchor_original_path
 from .recorder import foreground, center_cursor
-from .platform_api import window_pid, supported, focus_status, title_of, named_control_available
+from .platform_api import window_pid, supported, focus_status, title_of, named_control_available, window_rect
+from .window_geometry import remap_action, valid_rect
+from .adaptive_ready import wait_for_visual_settle, sample_window_thumbnail, VisualSettlingInterrupted
 from .action_wait import wait_until_ready, contains_title, ConditionCancelled, ConditionTimeout
 from .replay_safety import ReplaySafetyError, wait_for_target_window, require_protected_field
 
@@ -78,11 +80,13 @@ class Player(QThread):
     secure_input_requested = Signal()
     focus_waiting = Signal(bool)
     readiness_waiting = Signal(bool)
+    adaptive_waiting = Signal(bool)
 
     def __init__(self, actions: list[Action], target_hwnd: int, speed: float = 1.0,
                  cursor_mode: str = "smooth", center_at_start: bool = False,
                  parent=None, target_mode: str = "window", secure_values: dict[str, str] | None = None,
-                 typing_mode: str = "smooth", screen_bounds: list[int] | None = None):
+                 typing_mode: str = "smooth", screen_bounds: list[int] | None = None,
+                 recorded_window_bounds: list[int] | None = None, adaptive_wait: bool = False):
         super().__init__(parent)
         self.actions = actions
         self.target_hwnd = target_hwnd
@@ -92,6 +96,8 @@ class Player(QThread):
         self.typing_mode = typing_mode if typing_mode in ("original", "smooth", "instant") else "smooth"
         self.center_at_start = center_at_start
         self.screen_bounds = list(screen_bounds) if screen_bounds else None
+        self.recorded_window_bounds = list(recorded_window_bounds) if valid_rect(recorded_window_bounds) else None
+        self.adaptive_wait = bool(adaptive_wait)
         self.began_at = 0.0
         self.paused_at = 0.0
         self.pause_accumulated = 0.0
@@ -398,6 +404,37 @@ class Player(QThread):
             else:
                 pg.press(keys[0])
 
+    def _map_to_current_window(self, action: Action) -> Action:
+        # Screen-wide workflows retain their global coordinates. Historical
+        # projects without a recorded anchor retain their previous behavior.
+        if self.target_mode != "window" or not self.recorded_window_bounds:
+            return action
+        if action.kind not in ('click','drag','scroll'):
+            return action
+        self._guard()
+        try:
+            return remap_action(action, self.recorded_window_bounds,
+                                window_rect(self.target_hwnd))
+        except (OSError, ValueError) as exc:
+            raise Stopped(f"Cannot safely map pointer coordinates: {exc}") from exc
+
+    def _wait_for_visual_idle(self):
+        # This is a best-effort visual quiet period, not browser DOM-ready.
+        # Keep samples only in memory and never store or log captured pixels.
+        if not self.adaptive_wait or self.target_mode != 'window':
+            return
+        self.adaptive_waiting.emit(True)
+        try:
+            wait_for_visual_settle(
+                lambda: sample_window_thumbnail(window_rect(self.target_hwnd)),
+                guard=self._guard, cancel=self.abort.is_set,
+                paused=self.pause_flag.is_set,
+            )
+        except VisualSettlingInterrupted as exc:
+            raise Stopped(str(exc)) from exc
+        finally:
+            self.adaptive_waiting.emit(False)
+
     def run(self):
         try:
             ok, reason = supported()
@@ -430,7 +467,24 @@ class Player(QThread):
                     continue
                 self._guard(recover_focus=True)
                 self.progress.emit(i)
-                self._action(action)
+                mapped = self._map_to_current_window(action)
+                self._action(mapped)
+                # An explicit Wait action takes precedence over automatic
+                # visual settling. Avoid extra delays when the user provided
+                # a precise readiness condition for the next step.
+                next_action = next(
+                    (item for item in self.actions[i+1:] if item.enabled), None
+                )
+                navigation = action.kind == 'click' or (
+                    action.kind == 'key' and action.key.lower() in
+                    ('enter','f5','ctrl+r','alt+left','alt+right')
+                )
+                # An adaptive check is most useful when the next action
+                # follows quickly. A longer user-edited delay already gives
+                # the UI settling time, and the final step needs no wait.
+                if (navigation and next_action and next_action.kind != 'wait'
+                        and next_action.delay < 0.75):
+                    self._wait_for_visual_idle()
             self.finished_result.emit("Playback finished successfully.")
         except Stopped as ex:
             self.finished_result.emit(str(ex))

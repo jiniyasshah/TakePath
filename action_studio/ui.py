@@ -1023,8 +1023,9 @@ class ControlDock(QWidget):
         elif playing:
             paused=bool(self.owner.player.pause_flag.is_set())
             focus_wait=bool(getattr(self.owner, 'player_waiting_for_focus', False))
-            self.mode_status.setText('●  INPUT' if waiting else ('WAIT TARGET' if focus_wait else ('Ⅱ  PAUSED' if paused else '▶  PLAY')))
-            self.mode_status.setStyleSheet('color:#F5C680; font-weight:750;' if (waiting or focus_wait) else 'color:#8EA5FF; font-weight:750;')
+            ui_wait=bool(getattr(self.owner, 'player_waiting_for_ui', False))
+            self.mode_status.setText('●  INPUT' if waiting else ('WAIT UI' if ui_wait else ('WAIT TARGET' if focus_wait else ('Ⅱ  PAUSED' if paused else '▶  PLAY'))))
+            self.mode_status.setStyleSheet('color:#F5C680; font-weight:750;' if (waiting or focus_wait or ui_wait) else 'color:#8EA5FF; font-weight:750;')
             self.pause.setIcon(vector_icon('play' if paused else 'pause'))
         else:
             self.mode_status.setText('REPLAY IN' if self.owner.pending_mode=='play' else 'START IN')
@@ -1509,6 +1510,15 @@ class MainWindow(QMainWindow):
         self.play_center.toggled.connect(lambda v:self.settings.setValue('play_center',v))
         center_group.addWidget(self.play_center)
 
+        auto_group=toolbar_group('READINESS')
+        self.auto_wait_toggle=QPushButton('Adaptive wait')
+        self.auto_wait_toggle.setObjectName('toolbarToggle')
+        self.auto_wait_toggle.setCheckable(True)
+        self.auto_wait_toggle.setChecked(self.project.adaptive_wait)
+        self.auto_wait_toggle.setToolTip('After clicks and navigation keys, briefly wait for visible changes to settle. Not a guarantee of browser/network readiness.')
+        self.auto_wait_toggle.toggled.connect(self.set_adaptive_wait)
+        auto_group.addWidget(self.auto_wait_toggle)
+
         speed_group=toolbar_group('PLAYBACK SPEED')
         self.speed=QComboBox()
         self.speed.setObjectName('toolbarInput')
@@ -1594,6 +1604,13 @@ class MainWindow(QMainWindow):
         self.save_state.setText('● Unsaved changes' if self.is_dirty else (self.project_path.name if self.project_path else 'Not saved'))
         self.setWindowTitle(f"TakePath — {self.project.name}{' *' if self.is_dirty else ''}")
 
+    def set_adaptive_wait(self, enabled):
+        if self.busy():return
+        enabled=bool(enabled)
+        if self.project.adaptive_wait != enabled:
+            self.project.adaptive_wait=enabled
+            self.dirty()
+
     def _rows(self):
         return sorted({index.row() for index in self.table.selectedIndexes()})
 
@@ -1628,6 +1645,8 @@ class MainWindow(QMainWindow):
             self.global_mode.setCurrentText(self.project.cursor_mode.title())
         with QSignalBlocker(self.global_typing):
             self.global_typing.setCurrentText(self.project.global_typing_mode.title())
+        with QSignalBlocker(self.auto_wait_toggle):
+            self.auto_wait_toggle.setChecked(self.project.adaptive_wait)
         self._metrics()
         self.selection_changed()
         self.dock.sync()
@@ -2207,6 +2226,8 @@ class MainWindow(QMainWindow):
         self.project.target_title=target_title
         self.project.screen_bounds=bounds
         self.project.screen_size=bounds[2:]
+        self.project.recorded_window_bounds=(list(self.recorder.recorded_window_bounds)
+                                             if self.project.target_mode=='window' else [])
         if self.project.target_mode=='screen' and self.dock.selected_screen_label:
             self.project.target_title=self.dock.selected_screen_label
         self.project.preview_jpeg=''
@@ -2333,6 +2354,7 @@ class MainWindow(QMainWindow):
         self.playback_completed=False
         self.replay_ready=False
         self.player_waiting_for_focus=False
+        self.player_waiting_for_ui=False
         self.last_playback_message=''
         self.last_playback_step=-1
         actions=[replace(a,raw_path=[point[:] for point in a.raw_path]) for a in self.project.actions]
@@ -2340,7 +2362,9 @@ class MainWindow(QMainWindow):
         self.player=Player(actions,hwnd,speed,self.project.cursor_mode,self.play_center.isChecked(),
                            self,target_mode=self.project.target_mode,secure_values=self.prepared_secure,
                            typing_mode=self.project.global_typing_mode,
-                           screen_bounds=self.project.screen_bounds if self.project.target_mode=='screen' else None)
+                           screen_bounds=self.project.screen_bounds if self.project.target_mode=='screen' else None,
+                           recorded_window_bounds=self.project.recorded_window_bounds,
+                           adaptive_wait=self.project.adaptive_wait)
         self.prepared_secure={}
         self.player.progress.connect(self._on_progress)
         self.player.finished_result.connect(self._play_done)
@@ -2348,6 +2372,7 @@ class MainWindow(QMainWindow):
         self.player.paused_signal.connect(self._pause_status)
         self.player.focus_waiting.connect(self._focus_wait_status)
         self.player.readiness_waiting.connect(self._readiness_wait_status)
+        self.player.adaptive_waiting.connect(self._adaptive_wait_status)
         self.player.secure_input_requested.connect(self._secure_input_prompt)
         self.play_started_at=time.monotonic()
         self.player.start()
@@ -2359,6 +2384,12 @@ class MainWindow(QMainWindow):
         # Do not bring the full editor to the front during replay.
         if 0<=i<len(self.project.actions):
             self.status_line.setText(f'Running step {i+1} / {len(self.project.actions)}')
+
+    def _adaptive_wait_status(self, waiting):
+        self.player_waiting_for_ui=bool(waiting)
+        if waiting:
+            self.notice('Checking whether the interface has visually settled · F8 to stop.')
+        self.dock.sync()
 
     def _readiness_wait_status(self, waiting):
         self.player_waiting_for_focus=bool(waiting)
@@ -2407,6 +2438,7 @@ class MainWindow(QMainWindow):
 
     def _play_thread_done(self):
         self.player_waiting_for_focus=False
+        self.player_waiting_for_ui=False
         self.prepared_secure.clear()
         message=getattr(self,'last_playback_message','')
         success=message=='Playback finished successfully.'
