@@ -2438,6 +2438,7 @@ class MainWindow(QMainWindow):
 
     def _play_thread_done(self):
         self.player_waiting_for_focus=False
+        self.player_waiting_for_ui=False
         self.prepared_secure.clear()
         message=getattr(self,'last_playback_message','')
         success=message=='Playback finished successfully.'
