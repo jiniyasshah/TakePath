@@ -1022,8 +1022,9 @@ class ControlDock(QWidget):
             self.pause.setIcon(vector_icon('play' if paused else 'pause'))
         elif playing:
             paused=bool(self.owner.player.pause_flag.is_set())
-            self.mode_status.setText('●  INPUT' if waiting else ('Ⅱ  PAUSED' if paused else '▶  PLAY'))
-            self.mode_status.setStyleSheet('color:#F5C680; font-weight:750;' if waiting else 'color:#8EA5FF; font-weight:750;')
+            focus_wait=bool(getattr(self.owner, 'player_waiting_for_focus', False))
+            self.mode_status.setText('●  INPUT' if waiting else ('WAIT TARGET' if focus_wait else ('Ⅱ  PAUSED' if paused else '▶  PLAY')))
+            self.mode_status.setStyleSheet('color:#F5C680; font-weight:750;' if (waiting or focus_wait) else 'color:#8EA5FF; font-weight:750;')
             self.pause.setIcon(vector_icon('play' if paused else 'pause'))
         else:
             self.mode_status.setText('REPLAY IN' if self.owner.pending_mode=='play' else 'START IN')
@@ -2302,6 +2303,7 @@ class MainWindow(QMainWindow):
     def _launch_playback(self,hwnd):
         self.playback_completed=False
         self.replay_ready=False
+        self.player_waiting_for_focus=False
         self.last_playback_message=''
         self.last_playback_step=-1
         actions=[replace(a,raw_path=[point[:] for point in a.raw_path]) for a in self.project.actions]
@@ -2315,6 +2317,7 @@ class MainWindow(QMainWindow):
         self.player.finished_result.connect(self._play_done)
         self.player.finished.connect(self._play_thread_done)
         self.player.paused_signal.connect(self._pause_status)
+        self.player.focus_waiting.connect(self._focus_wait_status)
         self.player.secure_input_requested.connect(self._secure_input_prompt)
         self.play_started_at=time.monotonic()
         self.player.start()
@@ -2326,6 +2329,14 @@ class MainWindow(QMainWindow):
         # Do not bring the full editor to the front during replay.
         if 0<=i<len(self.project.actions):
             self.status_line.setText(f'Running step {i+1} / {len(self.project.actions)}')
+
+    def _focus_wait_status(self, waiting):
+        self.player_waiting_for_focus=bool(waiting)
+        if waiting:
+            self.notice('Waiting briefly for the original target window to regain focus. F8 to stop.')
+        else:
+            self.notice('Target focus restored; replay can continue.')
+        self.dock.sync()
 
     def _secure_input_prompt(self):
         self.notice('Manual secure input selected: enter it in the target app, then press Continue (F7).')
@@ -2357,6 +2368,7 @@ class MainWindow(QMainWindow):
         # The editor is hidden; displaying only its status line conceals errors.
 
     def _play_thread_done(self):
+        self.player_waiting_for_focus=False
         self.prepared_secure.clear()
         message=getattr(self,'last_playback_message','')
         success=message=='Playback finished successfully.'
