@@ -33,6 +33,19 @@ class ReadinessWaitTests(unittest.TestCase):
                              sleep=clock.sleep,poll=0.05)
         self.assertLess(clock.t,0.5)
 
+    def test_fractional_timeout_never_spins_forever(self):
+        clock=FakeClock()
+        calls=[0]
+        def tracked_sleep(duration):
+            calls[0]+=1
+            if calls[0] > 100:
+                self.fail('Timed-out Wait action is trapped in a zero-progress loop')
+            clock.sleep(duration)
+        with self.assertRaises(ConditionTimeout):
+            wait_until_ready(lambda:False, timeout=0.35, clock=clock.now,
+                             sleep=tracked_sleep, poll=0.05)
+        self.assertLess(calls[0],30)
+
     def test_cancel_and_cleanup(self):
         clock=FakeClock()
         markers=[]
