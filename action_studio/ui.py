@@ -1359,6 +1359,30 @@ class MainWindow(QMainWindow):
         self.key.textEdited.connect(lambda v:self._set('key',v))
         kv.addWidget(self.key)
         form.addWidget(self.key_container)
+        self.wait_container=QWidget(); self.wait_container.setObjectName('propertyGroup')
+        wait_form=V(self.wait_container,spacing=7)
+        wait_form.addWidget(L('WAIT FOR READINESS','tiny'))
+        self.wait_mode=QComboBox()
+        for label,mode in [('Target window title contains','target_title'),
+                           ('Active window title contains','active_title'),
+                           ('Focused safe field','focused_safe'),
+                           ('Focused password field','focused_protected'),
+                           ('Named control (Windows)','control_name')]:
+            self.wait_mode.addItem(label,mode)
+        self.wait_mode.currentIndexChanged.connect(lambda _i:self._set('wait_mode',self.wait_mode.currentData()))
+        wait_form.addWidget(self.wait_mode)
+        wait_form.addWidget(L('Window title / control name (when applicable)','muted'))
+        self.wait_value=QLineEdit()
+        self.wait_value.setMaxLength(160)
+        self.wait_value.setPlaceholderText('e.g. Save As or Search results')
+        self.wait_value.textEdited.connect(lambda v:self._set('wait_value',v))
+        wait_form.addWidget(self.wait_value)
+        wait_form.addWidget(L('Maximum wait (seconds)','muted'))
+        self.wait_timeout=number(0.5,120,15)
+        self.wait_timeout.valueChanged.connect(lambda v:self._set('wait_timeout',v))
+        wait_form.addWidget(self.wait_timeout)
+        wait_form.addWidget(L('Read-only check; stops if not ready. Window mode stays tied to its original target.','muted'))
+        form.addWidget(self.wait_container)
         self.pointer_container=QWidget(); self.pointer_container.setObjectName('propertyGroup'); pv=V(self.pointer_container,spacing=7)
         pv.addWidget(L('SCREEN POSITION','tiny'))
         grid=QGridLayout();grid.setSpacing(7)
@@ -1556,6 +1580,7 @@ class MainWindow(QMainWindow):
         for a in self.project.actions:
             if not a.enabled:continue
             duration+=a.delay
+            if a.kind=='wait':duration+=min(a.wait_timeout,5.0)  # approximate upper-bound-independent estimate
             if a.kind in ('click','drag'):duration+=a.path_duration
             if a.kind=='type' and self.project.global_typing_mode=='smooth':
                 duration+=len(a.text)*a.char_delay
@@ -1578,7 +1603,7 @@ class MainWindow(QMainWindow):
         self.updating=True
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.project.actions))
-        colors={'click':'#AFB4FF','drag':'#F1A7CE','scroll':'#90BDEB','type':'#7FD7C8','key':'#F1C38A','secure_input':'#FFB978'}
+        colors={'wait':'#9BCBFF','click':'#AFB4FF','drag':'#F1A7CE','scroll':'#90BDEB','type':'#7FD7C8','key':'#F1C38A','secure_input':'#FFB978'}
         for i,a in enumerate(self.project.actions):
             values=[f'{i+1:03d}',a.kind.upper(),a.label(),f'{a.delay:.2f} s','Yes' if a.enabled else 'No']
             for j,value in enumerate(values):
@@ -1632,6 +1657,7 @@ class MainWindow(QMainWindow):
         controls=[(self.enable,'setChecked',a.enabled),(self.delay,'setValue',a.delay),
                   (self.edit_text,'setPlainText',a.text),
                   (self.char_delay,'setValue',a.char_delay),(self.key,'setText',a.key),
+                  (self.wait_value,'setText',a.wait_value),(self.wait_timeout,'setValue',a.wait_timeout),
                   (self.mouse_button,'setCurrentIndex',max(0,self.mouse_button.findData(a.button))),(self.motion_time,'setValue',a.path_duration),
                   (self.scroll_x,'setValue',a.dx),(self.scroll_y,'setValue',a.dy)]
         controls.extend((widget,'setValue',getattr(a,key)) for key,widget in self.coords.items())
@@ -1646,6 +1672,9 @@ class MainWindow(QMainWindow):
             self.secret_edit.clear()   # only review on explicit request
             self._secure_status(a)
         self.key_container.setVisible(a.kind=='key')
+        self.wait_container.setVisible(a.kind=='wait')
+        with QSignalBlocker(self.wait_mode):
+            self.wait_mode.setCurrentIndex(max(0,self.wait_mode.findData(a.wait_mode)))
         self.pointer_container.setVisible(a.kind in ('click','drag','scroll'))
         self.scroll_container.setVisible(a.kind=='scroll')
         self.coords['end_x'].setEnabled(a.kind=='drag')
@@ -1791,7 +1820,7 @@ class MainWindow(QMainWindow):
     def add_action(self):
         from PySide6.QtWidgets import QInputDialog
         if self.busy():return
-        kind,ok=QInputDialog.getItem(self,'Add step','Action type',['click','type','key','scroll','drag','secure_input'],0,False)
+        kind,ok=QInputDialog.getItem(self,'Add step','Action type',['click','type','key','scroll','drag','secure_input','wait'],0,False)
         if not ok:return
         pos=max(self._rows(),default=len(self.project.actions)-1)+1
         a=Action(kind=kind)
@@ -2318,6 +2347,7 @@ class MainWindow(QMainWindow):
         self.player.finished.connect(self._play_thread_done)
         self.player.paused_signal.connect(self._pause_status)
         self.player.focus_waiting.connect(self._focus_wait_status)
+        self.player.readiness_waiting.connect(self._readiness_wait_status)
         self.player.secure_input_requested.connect(self._secure_input_prompt)
         self.play_started_at=time.monotonic()
         self.player.start()
@@ -2329,6 +2359,14 @@ class MainWindow(QMainWindow):
         # Do not bring the full editor to the front during replay.
         if 0<=i<len(self.project.actions):
             self.status_line.setText(f'Running step {i+1} / {len(self.project.actions)}')
+
+    def _readiness_wait_status(self, waiting):
+        self.player_waiting_for_focus=bool(waiting)
+        if waiting:
+            self.notice('Waiting for the selected readiness checkpoint · F8 to stop.')
+        else:
+            self.notice('Readiness checkpoint completed or ended.')
+        self.dock.sync()
 
     def _focus_wait_status(self, waiting):
         self.player_waiting_for_focus=bool(waiting)
