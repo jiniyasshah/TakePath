@@ -75,6 +75,7 @@ class Recorder(QObject):
         self.pause_total = 0.0
         self.scope = "window"
         self.own_hwnd = 0
+        self.recorded_window_bounds = []
 
     def begin(self, own_hwnd: int, target_hwnd: int = 0, scope: str = "window", capture_bounds=None, dock_bounds=None) -> bool:
         ok, reason = supported()
@@ -94,6 +95,12 @@ class Recorder(QObject):
         self.pause_total = 0.0
         self.target_title = title_of(target) or "Untitled window"
         self.bounds = list(capture_bounds) if self.scope == "screen" and capture_bounds else virtual_screen()
+        self.recorded_window_bounds = []
+        if self.scope == "window":
+            try:
+                self.recorded_window_bounds = list(window_rect(target))
+            except Exception:
+                self.notice.emit("Could not record window geometry; this take will use absolute pointer positions.")
         self.started_at = time.monotonic()
         self.builder = ActionBuilder()
         self.modifiers.clear()
