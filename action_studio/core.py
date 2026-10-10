@@ -154,12 +154,16 @@ class Project:
     target_mode: str = "window"  # window: scoped to chosen app; screen: across foreground apps
     preview_jpeg: str = ""       # Optional local, window-scoped still image; not video.
     preview_bounds: list[int] = field(default_factory=lambda: [0, 0, 1920, 1080])
+    recorded_window_bounds: list[int] = field(default_factory=list)  # Original capture window anchor
+    adaptive_wait: bool = True  # Best-effort visual readiness, configurable in editor
 
     def to_dict(self) -> dict:
         return {"schema": 2, "name": self.name, "target_title": self.target_title,
                 "screen_size": self.screen_size, "screen_bounds": self.screen_bounds,
                 "cursor_mode": self.cursor_mode, "global_typing_mode": self.global_typing_mode,
                 "target_mode": self.target_mode, "preview_jpeg": self.preview_jpeg,
+                "recorded_window_bounds": self.recorded_window_bounds,
+                "adaptive_wait": self.adaptive_wait,
                 "preview_bounds": self.preview_bounds, "actions": [
                     ({**asdict(a), "text": "", "key": "enter", "char_timings": []} if a.kind == "secure_input" else asdict(a))
                     for a in self.actions]}
@@ -195,10 +199,16 @@ class Project:
         global_typing = value.get('global_typing_mode', 'smooth')
         if global_typing not in GLOBAL_TYPING_MODES:
             global_typing = 'smooth'
+        window_anchor = value.get("recorded_window_bounds", [])
+        if not isinstance(window_anchor, list) or len(window_anchor) != 4 or any(
+            not isinstance(v,int) or abs(v)>100000 for v in window_anchor
+        ) or window_anchor[2]<=0 or window_anchor[3]<=0:
+            window_anchor=[]
         return cls(name=str(value.get("name", "Untitled workflow"))[:160],
                    target_title=str(value.get("target_title", ""))[:500],
                    screen_size=screen, screen_bounds=bounds, actions=[Action.from_dict(a) for a in actions],
-                   cursor_mode=mode, global_typing_mode=global_typing, target_mode=value.get("target_mode", "window") if value.get("target_mode", "window") in ("window", "screen") else "window", preview_jpeg=preview, preview_bounds=preview_bounds)
+                   cursor_mode=mode, global_typing_mode=global_typing, target_mode=value.get("target_mode", "window") if value.get("target_mode", "window") in ("window", "screen") else "window", preview_jpeg=preview, preview_bounds=preview_bounds,
+                   recorded_window_bounds=window_anchor, adaptive_wait=(value.get("adaptive_wait") is True))
 
 
 def remove_actions(actions: list[Action], selected_ids: set[str]) -> list[Action]:
