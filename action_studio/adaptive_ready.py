@@ -64,7 +64,9 @@ def wait_for_visual_settle(
             continue
         guard()
         now=clock()
-        if now-start >= max_seconds:
+        # Floating-point rounding can leave a sub-microsecond remainder.
+        # Never busy-loop if a sleep is too small to advance the clock.
+        if max_seconds - (now - start) <= 1e-6:
             return False
         sleep(min(poll, max_seconds-(now-start)))
         guard()
