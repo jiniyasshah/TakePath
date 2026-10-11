@@ -266,7 +266,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertTrue(hints[0].wordWrap())
 
     def test_context_menu_applies_fast_to_multiple_selected_mouse_actions(self):
-        from PySide6.QtWidgets import QMenu, QTableWidgetSelectionRange
+        from PySide6.QtWidgets import QTableWidgetSelectionRange
         actions=[
             self.Action(kind='click',x=15),
             self.Action(kind='wait',delay=3),
@@ -278,13 +278,10 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.editor.table.setRangeSelected(QTableWidgetSelectionRange(0,0,0,4),True)
         self.editor.table.setRangeSelected(QTableWidgetSelectionRange(1,0,3,4),True)
         self.assertEqual(self.editor._rows(),[0,1,2,3])
-        with patch('PySide6.QtWidgets.QMenu.exec', return_value=None):
-            self.editor.show_action_context_menu(
-                self.editor.table.visualRect(self.editor.table.model().index(2,0)).center())
-        menus=self.editor.table.findChildren(QMenu)
-        speed_menu=next((action.menu() for menu in menus for action in menu.actions()
-                         if action.text()=='Mouse speed' and action.menu()),None)
-        self.assertIsNotNone(speed_menu)
+        menu=self.editor.build_action_context_menu(
+            self.editor.table.visualRect(self.editor.table.model().index(2,0)).center())
+        speed_menu=next(action.menu() for action in menu.actions()
+                        if action.text()=='Mouse speed')
         fast=next(action for action in speed_menu.actions() if action.text()=='Fast')
         fast.trigger()
         self.assertEqual([a.mouse_speed_override for a in actions],
@@ -303,48 +300,42 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.editor.table.setRangeSelected(QTableWidgetSelectionRange(0,0,1,4),True)
         self.assertEqual(self.editor._rows(),[0,1])
         pos=self.editor.table.visualRect(self.editor.table.model().index(1,1)).center()
-        with patch('PySide6.QtWidgets.QMenu.exec', return_value=None):
-            QTest.mouseClick(self.editor.table.viewport(),Qt.RightButton,pos=pos)
+        # Right click itself should not collapse the multi-selection.
+        # Avoid opening a native popup in offscreen tests.
+        self.editor.table.customContextMenuRequested.disconnect(
+            self.editor.show_action_context_menu)
+        QTest.mouseClick(self.editor.table.viewport(),Qt.RightButton,pos=pos)
         self.assertEqual(self.editor._rows(),[0,1])
 
     def test_context_menu_override_reset_and_bulk_enable_disable(self):
-        from PySide6.QtWidgets import QMenu
         a=self.Action(kind='click',mouse_speed_override='slow')
         b=self.Action(kind='click',mouse_speed_override='fast')
         self.editor.project.actions=[a,b]
         self.editor.refresh({a.id,b.id})
-        with patch('PySide6.QtWidgets.QMenu.exec', return_value=None):
-            self.editor.show_action_context_menu(
-                self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
-        menus=self.editor.table.findChildren(QMenu)
-        top=next(menu for menu in menus if any(action.text()=='Mouse speed' for action in menu.actions()))
-        submenu=next(action.menu() for action in top.actions() if action.text()=='Mouse speed')
+        menu=self.editor.build_action_context_menu(
+            self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
+        submenu=next(action.menu() for action in menu.actions()
+                     if action.text()=='Mouse speed')
         inherit=next(action for action in submenu.actions() if action.text().startswith('Use global speed'))
         self.assertFalse(inherit.isChecked())
         inherit.trigger()
         self.assertEqual([a.mouse_speed_override,b.mouse_speed_override],['inherit','inherit'])
-        with patch('PySide6.QtWidgets.QMenu.exec', return_value=None):
-            self.editor.show_action_context_menu(
-                self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
-        menus=self.editor.table.findChildren(QMenu)
-        top=next(menu for menu in menus[::-1] if any(action.text()=='Disable selected' for action in menu.actions()))
-        next(action for action in top.actions() if action.text()=='Disable selected').trigger()
+        another=self.editor.build_action_context_menu(
+            self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
+        next(action for action in another.actions() if action.text()=='Disable selected').trigger()
         self.assertFalse(a.enabled)
         self.assertFalse(b.enabled)
 
     def test_context_menu_nonmouse_rows_do_not_gain_speed_overrides(self):
-        from PySide6.QtWidgets import QMenu
         action=self.Action(kind='type',text='hello')
         self.editor.project.actions=[action]
         self.editor.refresh({action.id})
-        with patch('PySide6.QtWidgets.QMenu.exec',return_value=None):
-            self.editor.show_action_context_menu(
-                self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
-        menus=self.editor.table.findChildren(QMenu)
-        submenu=next(item.menu() for m in menus for item in m.actions()
-                     if item.text()=='Mouse speed' and item.menu())
+        menu=self.editor.build_action_context_menu(
+            self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
+        submenu=next(item.menu() for item in menu.actions() if item.text()=='Mouse speed')
         self.assertFalse(submenu.isEnabled())
         self.assertEqual(action.mouse_speed_override,'inherit')
+
 
 if __name__=='__main__':
     unittest.main()
