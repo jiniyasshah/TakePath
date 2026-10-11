@@ -345,7 +345,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
         old=dock.compact_active
         try:
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,196,64]):
+                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]):
                 dock.show()
                 self.editor.recorder.active=True
                 dock.sync()
@@ -354,16 +354,26 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertTrue(dock.control_island.pause.isEnabled())
                 self.assertTrue(dock.control_island.stop.isEnabled())
                 self.assertFalse(dock.pause.isVisible())
-                self.assertEqual(self.editor.recorder.interactive_bounds,(500,30,196,64))
+                self.assertEqual(self.editor.recorder.interactive_bounds,(500,30,146,64))
                 dock.set_compact_mode(True)
-                self.assertEqual(dock.width(),238)
-                self.assertGreater(dock.control_island.x(),dock.x()+dock.width()-15)
+                self.assertEqual(dock.width(),174)
+                self.assertEqual(dock.height(),64)
+                self.assertEqual(dock.control_island.width(),146)
+                self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
+                self.assertEqual(dock.control_island.y(),dock.y())
+                self.assertEqual(dock.body.objectName(),'dockBodyJoinedLeft')
+                self.assertEqual(dock.control_island.frame.objectName(),'dockBodyJoinedRight')
+                self.assertEqual(dock.width()+dock.control_island.width(),320)
                 dock.set_compact_mode(False)
                 self.assertEqual(dock.width(),846)
+                self.assertEqual(dock.height(),64)
+                self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
                 self.editor.recorder.active=False
                 dock.sync()
                 self.assertFalse(dock.control_island.isVisible())
                 self.assertIsNone(self.editor.recorder.interactive_bounds)
+                self.assertEqual(dock.height(),84)
+                self.assertEqual(dock.body.objectName(),'dockBody')
         finally:
             self.editor.recorder.active=False
             dock.set_compact_mode(old)
@@ -378,7 +388,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
             self.editor.recorder.active=True
             events=[]
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,196,64]), \
+                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]), \
                  patch.object(self.editor.recorder,'toggle_pause',
                               side_effect=lambda:events.append('pause')), \
                  patch.object(self.editor.recorder,'stop',
@@ -472,6 +482,32 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertFalse(submenu.isVisible(), 'Mouse speed submenu remained open on Disable')
         menu.hide()
 
+    def test_active_dock_centers_the_combined_capsule(self):
+        from unittest.mock import patch
+        from PySide6.QtGui import QGuiApplication
+        dock=self.editor.dock
+        old=dock.compact_active
+        try:
+            dock.set_compact_mode(True)
+            self.editor.recorder.active=True
+            with patch.object(dock,'_avoid_stealing_focus'), \
+                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]):
+                dock.show()
+                dock.sync()
+                dock.place('top',initially=True)
+                self.qt.processEvents()
+                area=QGuiApplication.primaryScreen().availableGeometry()
+                full_width=dock.width()+dock.control_island.width()
+                self.assertEqual(dock.x(),area.left()+(area.width()-full_width)//2)
+                self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
+                self.assertEqual(dock.control_island.y(),dock.y())
+                self.assertEqual(dock.control_island.height(),dock.height())
+        finally:
+            self.editor.recorder.active=False
+            dock.sync()
+            dock.set_compact_mode(old)
+            dock.hide()
+
     def test_compact_replay_dock_auto_shrinks_and_sidecar_is_adjacent(self):
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -483,14 +519,18 @@ class EditorWaitSmokeTests(unittest.TestCase):
             self.editor.player=SimpleNamespace(
                 isRunning=lambda:True,awaiting_secure_input=False,pause_flag=flag)
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,196,64]):
+                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]):
                 dock.show()
                 dock.sync()
                 self.qt.processEvents()
-                self.assertEqual(dock.width(),332)
+                self.assertEqual(dock.width(),250)
+                self.assertEqual(dock.height(),64)
                 self.assertFalse(dock.clock.isVisible())
                 self.assertTrue(dock.step_status.isVisible())
-                self.assertGreaterEqual(dock.control_island.x(), dock.x()+dock.width()-12)
+                self.assertEqual(dock.control_island.x(), dock.x()+dock.width())
+                self.assertEqual(dock.control_island.y(), dock.y())
+                self.assertEqual(dock.width()+dock.control_island.width(),396)
+                self.assertEqual(dock.body.objectName(),'dockBodyJoinedLeft')
         finally:
             self.editor.player=None
             dock.set_compact_mode(old)
