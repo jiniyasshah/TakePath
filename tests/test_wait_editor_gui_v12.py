@@ -398,7 +398,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         island=dock.control_island
         self.assertTrue(bool(island.windowFlags() & Qt.WindowDoesNotAcceptFocus))
         self.assertTrue(island.testAttribute(Qt.WA_ShowWithoutActivating))
-        self.assertNotEqual(island.windowHandle(),dock.windowHandle())
+        self.assertTrue(island.isWindow())
+        self.assertIsNone(island.parentWidget())
+        self.assertTrue(dock.isWindow())
 
 if __name__=='__main__':
     unittest.main()
