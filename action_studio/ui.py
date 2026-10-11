@@ -1450,7 +1450,7 @@ class SecurePreflightDialog(QDialog):
         layout=V(self,(24,22,24,20),14)
         layout.addWidget(L('Complete secure inputs','heading'))
         explanation=L('These values will be typed automatically into the target app. '
-                      'Choose whether to save each one in Windows Credential Manager or use it only for this session.','muted')
+                      'Securely save on this device, or reuse one value for every missing step when appropriate.','muted')
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
         self.inputs={}
@@ -1466,13 +1466,19 @@ class SecurePreflightDialog(QDialog):
             password_row.addWidget(password_reveal_button(edit))
             col.addLayout(password_row)
             checkbox=QCheckBox('Save securely on this Windows PC')
-            checkbox.setChecked(False)
+            checkbox.setChecked(bool(allow_save))
             checkbox.setEnabled(allow_save)
             if not allow_save: checkbox.setToolTip('Windows Credential Manager is unavailable. Session-only input still works.')
             col.addWidget(checkbox)
             layout.addWidget(group)
             self.inputs[ref]=edit
             self.remember[ref]=checkbox
+        self.apply_all=QCheckBox('Use the first passphrase for all missing secure inputs')
+        self.apply_all.setChecked(False)
+        self.apply_all.setEnabled(len(self.inputs)>1)
+        self.apply_all.setToolTip('Only enable when every missing field uses exactly the same secret.')
+        self.apply_all.toggled.connect(self._toggle_reuse)
+        layout.addWidget(self.apply_all)
         self.error=L('','muted');self.error.setStyleSheet('color:#FF8899;');layout.addWidget(self.error)
         btn=QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
         btn.button(QDialogButtonBox.Ok).setText('Prepare replay')
@@ -1481,30 +1487,89 @@ class SecurePreflightDialog(QDialog):
         layout.addWidget(btn)
         if self.inputs:next(iter(self.inputs.values())).setFocus()
 
+    def _toggle_reuse(self, enabled):
+        first=next(iter(self.inputs))
+        for ref,widget in self.inputs.items():
+            if ref==first:continue
+            widget.setEnabled(not enabled)
+            self.remember[ref].setEnabled(not enabled and self.remember[first].isEnabled())
+
     def _confirm(self):
         try:
-            for widget in self.inputs.values():validate_password(widget.text())
+            if self.apply_all.isChecked():
+                validate_password(next(iter(self.inputs.values())).text())
+            else:
+                for widget in self.inputs.values():validate_password(widget.text())
         except ValueError:
-            self.error.setText('Enter a value for every missing secure input.')
+            self.error.setText('Enter a value for every required secure input.')
             return
         self.accept()
 
     def submitted(self):
-        # Caller immediately transfers values to ephemeral memory / credential
-        # manager and then the dialog is discarded.
+        # Explicit opt-in to reuse the first value, never automatic guessing.
+        if self.apply_all.isChecked():
+            first=next(iter(self.inputs))
+            secret=self.inputs[first].text()
+            persist=self.remember[first].isChecked()
+            return [(ref,secret,persist) for ref in self.inputs]
         return [(ref,edit.text(),self.remember[ref].isChecked()) for ref,edit in self.inputs.items()]
 
 
+class PortablePassphraseDialog(QDialog):
+    """User-supplied export/unlock passphrase. Never save or remember it."""
+    def __init__(self,parent=None,confirm=False):
+        super().__init__(parent)
+        self.setWindowTitle('Encrypt portable project' if confirm else 'Unlock portable project')
+        self.setMinimumWidth(460)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint,False)
+        layout=V(self,(22,20,22,18),12)
+        help_text=('A portable copy will include AES-GCM encrypted secure values. '
+                   'Remember this passphrase: it cannot be recovered.'
+                   if confirm else
+                   'This project contains encrypted secure values. '
+                   'Enter its export passphrase to unlock them for replay.')
+        help_label=L(help_text,'muted');help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+        self.value=QLineEdit()
+        self.value.setEchoMode(QLineEdit.Password)
+        self.value.setPlaceholderText('Passphrase (12+ characters)')
+        self.value.setMaxLength(512)
+        row=H(spacing=8);row.addWidget(self.value,1);row.addWidget(password_reveal_button(self.value))
+        layout.addLayout(row)
+        self.confirm=QLineEdit() if confirm else None
+        if self.confirm is not None:
+            self.confirm.setEchoMode(QLineEdit.Password)
+            self.confirm.setPlaceholderText('Confirm passphrase')
+            row=H(spacing=8);row.addWidget(self.confirm,1);row.addWidget(password_reveal_button(self.confirm))
+            layout.addLayout(row)
+        self.error=L('','muted');layout.addWidget(self.error)
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept_if_valid);buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept_if_valid(self):
+        if len(self.value.text()) < 12:
+            self.error.setText('Use at least 12 characters.')
+        elif self.confirm is not None and self.value.text()!=self.confirm.text():
+            self.error.setText('Passphrases do not match.')
+        else:
+            self.accept()
+
+    def passphrase(self):
+        return self.value.text()
+
+    def clear_passphrase(self):
+        self.value.clear()
+        if self.confirm is not None:self.confirm.clear()
+
+
 class ActionContextMenu(QMenu):
-    """Dismiss lingering submenus immediately on unrelated root-row hover."""
-    def mouseMoveEvent(self,event):
-        hovered=self.actionAt(event.position().toPoint())
-        if hovered is not None:
-            for root in self.actions():
-                submenu=root.menu()
-                if submenu is not None and root is not hovered and submenu.isVisible():
-                    submenu.hide()
-        super().mouseMoveEvent(event)
+    """Use Qt's native submenu aim/timing; do not hide on pointer movement.
+
+    Previously aggressive hover handlers closed Mouse Speed as the cursor
+    crossed the small gap from the root item into its submenu.
+    """
+    pass
 
 
 class ActionTable(QTableWidget):
@@ -2233,19 +2298,6 @@ class MainWindow(QMainWindow):
                       if 0<=i<len(self.project.actions)})
         self.notice(f'Fixed wait: {seconds:g}s for {len(changed)} action(s).')
 
-    @staticmethod
-    def _close_irrelevant_submenus(menu, hovered_action):
-        """Close submenu as soon as another root command is hovered.
-
-        On Windows/Qt the safe-triangle menu delay sometimes left the Mouse
-        speed submenu open while hovering Disable selected. Explicitly close
-        any submenu whose parent root action is no longer hovered.
-        """
-        for root in menu.actions():
-            child=root.menu()
-            if child is not None and root is not hovered_action and child.isVisible():
-                child.hide()
-
     def build_action_context_menu(self, pos):
         """Context-sensitive actions for the exact selected action types."""
         if self.busy():return None
@@ -2326,8 +2378,8 @@ class MainWindow(QMainWindow):
         duplicate.triggered.connect(self.duplicate)
         delete.triggered.connect(self.delete_selected)
 
-        menu.hovered.connect(
-            lambda hovered:self._close_irrelevant_submenus(menu,hovered))
+        # Native Qt hover and submenu safe-corridor behavior now owns opening
+        # and closing; forced hide() during mouse travel made it unusable.
         return menu
 
     def show_action_context_menu(self, pos):
