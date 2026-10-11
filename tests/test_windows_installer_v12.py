@@ -36,7 +36,7 @@ class WindowsInstallerTests(unittest.TestCase):
         self.assertIn("postinstall skipifsilent", self.iss)
 
     def test_installer_and_package_versions_match(self):
-        self.assertRegex(__version__, r"^1[.]2[.]0-beta[.]2$")
+        self.assertRegex(__version__, r"^1[.]2[.]0-beta[.]4$")
         self.assertIn('#define MyAppVersion "' + __version__ + '"', self.iss)
         self.assertIn("VersionInfoVersion={#MyAppNumericVersion}", self.iss)
         self.assertIn("MyAppNumericVersion=1.2.0.0", self.iss)
