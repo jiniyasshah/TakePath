@@ -9,7 +9,7 @@
     <a href="https://github.com/jiniyasshah/TakePath/releases"><strong>Download TakePath</strong></a>
     · <a href="#how-it-works">How it works</a>
     · <a href="#features">Features</a>
-    · <a href="#platform-support">Platform support</a>
+    · <a href="#download">Platform downloads</a>
   </p>
   <p>
     <a href="https://github.com/jiniyasshah/TakePath/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/jiniyasshah/TakePath?include_prereleases&label=release" /></a>
