@@ -11,7 +11,7 @@ from pathlib import Path
 import uuid
 
 KINDS = {"click", "type", "key", "scroll", "drag", "secure_input", "wait"}
-WAIT_MODES = {"target_title", "active_title", "focused_safe", "focused_protected", "control_name"}
+WAIT_MODES = {"duration", "target_title", "active_title", "focused_safe", "focused_protected", "control_name"}
 MODES = {"original", "smooth", "straight", "gentle"}
 TEXT_MODES = {"human", "instant", "original", "smooth"}
 GLOBAL_TYPING_MODES = {"original", "smooth", "instant"}
@@ -58,7 +58,7 @@ class Action:
     char_timings: list[float] = field(default_factory=list)  # Non-secret relative typing rhythm
     secure_mode: str = "auto"       # auto, manual or skip; never a password
     secure_ref: str = ""             # Opaque reference to Windows Credential Manager
-    wait_mode: str = "target_title"   # Explicit no-input readiness checkpoint
+    wait_mode: str = "duration"       # Fixed pause, or an explicit readiness checkpoint
     wait_value: str = ""             # Window/control name only; no secrets
     wait_timeout: float = 15.0       # Wall-clock seconds, not playback speed
 
@@ -74,6 +74,12 @@ class Action:
         defaults.wait_timeout = finite_range(defaults.wait_timeout, 0.5, 120)
         defaults.wait_mode = defaults.wait_mode if defaults.wait_mode in WAIT_MODES else "target_title"
         defaults.wait_value = str(defaults.wait_value).strip()[:160]
+        # The original 1.2 beta created title waits with no title. Users
+        # commonly set their "Pause before action" to a desired duration.
+        # Preserve that time and convert invalid old checkpoints to pauses.
+        if (defaults.kind == "wait" and defaults.wait_mode == "target_title"
+                and not defaults.wait_value):
+            defaults.wait_mode = "duration"
         defaults.path_duration = finite_range(defaults.path_duration, 0, 20)
         defaults.char_delay = finite_range(defaults.char_delay, 0, 2)
         defaults.enabled = bool(defaults.enabled)
@@ -117,6 +123,8 @@ class Action:
         if self.kind == "secure_input":
             return {"auto": "Protected input · auto-fill", "manual": "Protected input · manual entry", "skip": "Protected input · skip"}.get(self.secure_mode, "Secure input")
         if self.kind == "wait":
+            if self.wait_mode == "duration":
+                return f"Pause for {self.delay:.2f} s"
             what = {
                 "target_title": "Target window title",
                 "active_title": "Active window title",
