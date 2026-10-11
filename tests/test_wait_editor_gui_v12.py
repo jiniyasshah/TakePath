@@ -360,6 +360,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertEqual(self.editor.recorder.interactive_grip_bounds,(60,41,34,42))
                 self.assertTrue(dock.grip_overlay.isVisible())
                 dock.set_compact_mode(True)
+                from PySide6.QtTest import QTest
+                QTest.qWait(310)
                 self.assertEqual(dock.width(),214)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.width(),116)
@@ -373,12 +375,14 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertEqual(grip_offset.y(),11)
                 self.assertTrue(dock.grip_placeholder.isVisible())
                 dock.set_compact_mode(False)
+                QTest.qWait(310)
                 self.assertEqual(dock.width(),846)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
                 self.assertEqual(dock.grip_overlay.pos()-dock.pos(),grip_offset)
                 self.editor.recorder.active=False
                 dock.sync()
+                QTest.qWait(310)
                 self.assertFalse(dock.control_island.isVisible())
                 self.assertFalse(dock.grip_overlay.isVisible())
                 self.assertIsNone(self.editor.recorder.interactive_bounds)
@@ -480,7 +484,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
         next(item for item in times.actions() if item.text()=='5 seconds').trigger()
         self.assertEqual(a.delay,5)
 
-    def test_unrelated_context_row_immediately_closes_hovered_mouse_submenu(self):
+    def test_mouse_speed_submenu_stays_accessible_during_hover(self):
         from PySide6.QtWidgets import QApplication
         a=self.Action(kind='click')
         self.editor.project.actions=[a]
@@ -494,7 +498,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         QApplication.processEvents()
         self.assertTrue(submenu.isVisible())
         menu.hovered.emit(disable)
-        self.assertFalse(submenu.isVisible(), 'Mouse speed submenu remained open on Disable')
+        self.assertTrue(submenu.isVisible(), 'App must not force-hide submenu during cursor travel')
+        next(item for item in submenu.actions() if item.text()=='Fast').trigger()
+        self.assertEqual(a.mouse_speed_override,'fast')
         menu.hide()
 
     def test_active_dock_centers_the_combined_capsule(self):
@@ -512,6 +518,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 dock.show()
                 dock.sync()
                 dock.place('top',initially=True)
+                from PySide6.QtTest import QTest
+                QTest.qWait(310)
                 self.qt.processEvents()
                 area=QGuiApplication.primaryScreen().availableGeometry()
                 full_width=dock.width()+dock.control_island.width()
@@ -544,6 +552,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                      else [60,41,34,42])):
                 dock.show()
                 dock.sync()
+                from PySide6.QtTest import QTest
+                QTest.qWait(310)
                 self.qt.processEvents()
                 self.assertEqual(dock.width(),290)
                 self.assertEqual(dock.height(),64)
