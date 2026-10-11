@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QPointF, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo
+from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QImage, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
@@ -1217,6 +1217,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self._tick_countdown)
         self.updating=False
         self._build_editor()
+        QApplication.instance().installEventFilter(self)
         self.dock=ControlDock(self)
         self.tray=None
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -1268,11 +1269,13 @@ class MainWindow(QMainWindow):
         railbox=V(rail,(10,14,10,10),12)
         railbox.addWidget(icon_button('arrow-left',self.show_dock,'Return to recording bar',color='#9CA7C3'))
         railbox.addSpacing(8)
-        railbox.addWidget(icon_button('plus',self.add_action,'Insert action',color='#A5B5FE'))
+        self.rail_add_button=icon_button('plus',self.add_action,'Insert action after selected; use + Before above the list to insert ahead',color='#A5B5FE')
+        railbox.addWidget(self.rail_add_button)
         railbox.addWidget(icon_button('folder',self.open_project,'Open a project'))
         railbox.addWidget(icon_button('save',self.save,'Save this project'))
         railbox.addStretch(1)
-        railbox.addWidget(icon_button('trash',self.delete_selected,'Delete selected steps',color='#F0A4B3'))
+        self.rail_delete_button=icon_button('trash',self.delete_selected,'Delete selected steps',color='#F0A4B3')
+        railbox.addWidget(self.rail_delete_button)
         main_row.addWidget(rail)
         body=QSplitter(Qt.Vertical); body.setChildrenCollapsible(False)
         main_row.addWidget(body,1)
@@ -1305,7 +1308,8 @@ class MainWindow(QMainWindow):
         self.enable=QCheckBox('Include in playback')
         self.enable.toggled.connect(lambda v:self._set('enabled',v))
         form.addWidget(self.enable)
-        form.addWidget(L('PAUSE BEFORE ACTION','tiny'))
+        self.delay_caption=L('PAUSE BEFORE ACTION','tiny')
+        form.addWidget(self.delay_caption)
         self.delay=number(val=.5)
         self.delay.valueChanged.connect(lambda v:self._set('delay',v))
         form.addWidget(self.delay)
@@ -1363,9 +1367,10 @@ class MainWindow(QMainWindow):
         form.addWidget(self.key_container)
         self.wait_container=QWidget(); self.wait_container.setObjectName('propertyGroup')
         wait_form=V(self.wait_container,spacing=7)
-        wait_form.addWidget(L('WAIT FOR READINESS','tiny'))
+        wait_form.addWidget(L('WAIT TYPE','tiny'))
         self.wait_mode=QComboBox()
-        for label,mode in [('Target window title contains','target_title'),
+        for label,mode in [('Pause for a fixed duration','duration'),
+                           ('Target window title contains','target_title'),
                            ('Active window title contains','active_title'),
                            ('Focused safe field','focused_safe'),
                            ('Focused password field','focused_protected'),
@@ -1373,17 +1378,21 @@ class MainWindow(QMainWindow):
             self.wait_mode.addItem(label,mode)
         self.wait_mode.currentIndexChanged.connect(lambda _i:self._set('wait_mode',self.wait_mode.currentData()))
         wait_form.addWidget(self.wait_mode)
-        wait_form.addWidget(L('Window title / control name (when applicable)','muted'))
+        self.wait_value_caption=L('Window title / control name (when applicable)','muted')
+        wait_form.addWidget(self.wait_value_caption)
         self.wait_value=QLineEdit()
         self.wait_value.setMaxLength(160)
         self.wait_value.setPlaceholderText('e.g. Save As or Search results')
         self.wait_value.textEdited.connect(lambda v:self._set('wait_value',v))
         wait_form.addWidget(self.wait_value)
-        wait_form.addWidget(L('Maximum wait (seconds)','muted'))
+        self.wait_timeout_caption=L('Maximum wait for condition (seconds)','muted')
+        wait_form.addWidget(self.wait_timeout_caption)
         self.wait_timeout=number(0.5,120,15)
         self.wait_timeout.valueChanged.connect(lambda v:self._set('wait_timeout',v))
         wait_form.addWidget(self.wait_timeout)
-        wait_form.addWidget(L('Read-only check; stops if not ready. Window mode stays tied to its original target.','muted'))
+        self.wait_help=L('Fixed pause uses the seconds above. Conditional waits only continue when the check is satisfied.','muted')
+        self.wait_help.setWordWrap(True)
+        wait_form.addWidget(self.wait_help)
         form.addWidget(self.wait_container)
         self.pointer_container=QWidget(); self.pointer_container.setObjectName('propertyGroup'); pv=V(self.pointer_container,spacing=7)
         pv.addWidget(L('SCREEN POSITION','tiny'))
@@ -1427,12 +1436,18 @@ class MainWindow(QMainWindow):
         bar.addStretch()
         self.preview_choice=B('Show action map',self.preview_menu,'quiet','Optional screenshot and click-position map')
         bar.addWidget(self.preview_choice)
-        bar.addWidget(B('+ Add',self.add_action,'outline'))
-        bar.addWidget(B('Duplicate',self.duplicate,'quiet'))
-        bar.addWidget(B('↑',lambda:self.move_action(-1),'quiet'))
-        bar.addWidget(B('↓',lambda:self.move_action(1),'quiet'))
-        bar.addWidget(B('Delete',self.delete_selected,'warning'))
-        bar.addWidget(B('Select all',self.select_all,'quiet'))
+        self.add_action_button=B('+ Add',self.add_action,'outline','Insert after the selected action; append when nothing is selected')
+        bar.addWidget(self.add_action_button)
+        self.before_action_button=B('+ Before',lambda:self.add_action(before=True),'quiet','Insert before the selected action, or at the very beginning if nothing is selected')
+        bar.addWidget(self.before_action_button)
+        self.action_operation_buttons=[
+            B('Duplicate',self.duplicate,'quiet'),
+            B('↑',lambda:self.move_action(-1),'quiet'),
+            B('↓',lambda:self.move_action(1),'quiet'),
+            B('Delete',self.delete_selected,'warning'),
+            B('Select all',self.select_all,'quiet'),
+        ]
+        for button in self.action_operation_buttons:bar.addWidget(button)
         low.addLayout(bar)
         self.table=QTableWidget(0,5)
         self.table.setHorizontalHeaderLabels(['STEP','TYPE','ACTION / TEXT','DELAY','ACTIVE'])
@@ -1591,7 +1606,7 @@ class MainWindow(QMainWindow):
         for a in self.project.actions:
             if not a.enabled:continue
             duration+=a.delay
-            if a.kind=='wait':duration+=min(a.wait_timeout,5.0)  # approximate upper-bound-independent estimate
+            if a.kind=='wait' and a.wait_mode!='duration':duration+=min(a.wait_timeout,5.0)  # conditional estimate only
             if a.kind in ('click','drag'):duration+=a.path_duration
             if a.kind=='type' and self.project.global_typing_mode=='smooth':
                 duration+=len(a.text)*a.char_delay
@@ -1695,6 +1710,7 @@ class MainWindow(QMainWindow):
         self.wait_container.setVisible(a.kind=='wait')
         with QSignalBlocker(self.wait_mode):
             self.wait_mode.setCurrentIndex(max(0,self.wait_mode.findData(a.wait_mode)))
+        self._sync_wait_properties(a)
         self.pointer_container.setVisible(a.kind in ('click','drag','scroll'))
         self.scroll_container.setVisible(a.kind=='scroll')
         self.coords['end_x'].setEnabled(a.kind=='drag')
@@ -1702,6 +1718,20 @@ class MainWindow(QMainWindow):
         self.motion_time.setEnabled(a.kind in ('click','drag'))
         self.mouse_button.setEnabled(a.kind in ('click','drag'))
         self.updating=False
+
+    def _sync_wait_properties(self, action):
+        fixed = action.kind=='wait' and action.wait_mode=='duration'
+        self.delay_caption.setText('WAIT DURATION' if fixed else 'PAUSE BEFORE ACTION')
+        needs_name = action.kind=='wait' and action.wait_mode in ('target_title','active_title','control_name')
+        conditional = action.kind=='wait' and not fixed
+        self.wait_value_caption.setVisible(needs_name)
+        self.wait_value.setVisible(needs_name)
+        self.wait_timeout_caption.setVisible(conditional)
+        self.wait_timeout.setVisible(conditional)
+        if fixed:
+            self.wait_help.setText('Pause for the duration above, then continue. F8 stops playback. No title or control name is needed.')
+        else:
+            self.wait_help.setText('Continue only when the selected condition matches; stop on timeout.')
 
     def _selected_secure(self):
         rows=self._rows()
@@ -1818,6 +1848,7 @@ class MainWindow(QMainWindow):
         self.table.item(rows[0],3).setText(f'{a.delay:.2f} s')
         self.table.item(rows[0],4).setText('Yes' if a.enabled else 'No')
         self.inspector_info.setText(a.label()[:120])
+        if key=='wait_mode':self._sync_wait_properties(a)
         self.canvas.update()
 
     def select_index(self,index):
@@ -1837,13 +1868,17 @@ class MainWindow(QMainWindow):
         if index in self._rows():self.selection_changed()
         self.canvas.update()
 
-    def add_action(self):
+    def add_action(self, before=False):
         from PySide6.QtWidgets import QInputDialog
         if self.busy():return
         kind,ok=QInputDialog.getItem(self,'Add step','Action type',['click','type','key','scroll','drag','secure_input','wait'],0,False)
         if not ok:return
-        pos=max(self._rows(),default=len(self.project.actions)-1)+1
+        rows=self._rows()
+        pos=(min(rows) if rows else 0) if before else (max(rows)+1 if rows else len(self.project.actions))
         a=Action(kind=kind)
+        if kind=='wait':
+            a.wait_mode='duration'
+            a.delay=3.0
         self.project.actions.insert(pos,a)
         self.dirty();self.refresh({a.id})
 
