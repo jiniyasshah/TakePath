@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -1404,7 +1404,7 @@ class MainWindow(QMainWindow):
         self.canvas.picked.connect(self.select_index)
         self.canvas.moved.connect(self.move_canvas_point)
         up.addWidget(center,1)
-        inspector=F('card'); inspector.setFixedWidth(288)
+        inspector=F('card'); inspector.setFixedWidth(320)
         self.inspector_panel=inspector
         ins=V(inspector,(14,15,14,12),10)
         ins.addWidget(L('ACTION PROPERTIES','tiny'))
@@ -1414,6 +1414,7 @@ class MainWindow(QMainWindow):
         self.inspector_info.setWordWrap(True)
         ins.addWidget(self.inspector_info)
         scroller=QScrollArea(); scroller.setWidgetResizable(True)
+        scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         holder=QWidget(); holder.setObjectName('inspectorHolder'); form=V(holder,(3,6,3,10),9)
         self.enable=QCheckBox('Include in playback')
         self.enable.toggled.connect(lambda v:self._set('enabled',v))
@@ -1459,14 +1460,18 @@ class MainWindow(QMainWindow):
         secure_form.addLayout(secret_row)
         self.secret_remember=QCheckBox('Save securely on this Windows PC')
         secure_form.addWidget(self.secret_remember)
-        controls=H(spacing=6)
+        # These controls used to be placed side by side in a 288px inspector,
+        # forcing horizontal scrolling and clipping the password controls.
+        controls=V(spacing=5)
         controls.addWidget(B('Set value',self.set_secure_value,'primary'))
         controls.addWidget(B('Forget value',self.forget_secure_value,'quiet'))
         secure_form.addLayout(controls)
-        review=B('Review configured value',self.review_secure_value,'quiet',
-                 'Explicitly load the currently configured value into the masked field for verification')
+        review=B('Review value',self.review_secure_value,'quiet',
+                 'Explicitly load the configured value into the masked field for verification')
         secure_form.addWidget(review)
-        secure_form.addWidget(L('Values remain hidden unless you click the eye icon. They never go in project JSON.','muted'))
+        secret_help=L('Values stay hidden unless you click the eye icon. They never go in project JSON.','muted')
+        secret_help.setWordWrap(True)
+        secure_form.addWidget(secret_help)
         sv.addWidget(self.secure_autofill)
         form.addWidget(self.secure_container)
         self.key_container=QWidget(); self.key_container.setObjectName('propertyGroup'); kv=V(self.key_container,spacing=7)
@@ -1618,6 +1623,16 @@ class MainWindow(QMainWindow):
         self.global_mode.currentTextChanged.connect(lambda v:self.set_cursor_mode(v.lower()))
         cursor_group.addWidget(self.global_mode)
 
+        mouse_speed_group=toolbar_group('MOUSE SPEED')
+        self.mouse_speed=QComboBox()
+        self.mouse_speed.setObjectName('toolbarInput')
+        self.mouse_speed.setFixedWidth(106)
+        self.mouse_speed.addItems(['Normal','Fast','Slow','Instant'])
+        self.mouse_speed.setCurrentText(self.project.mouse_speed_mode.title())
+        self.mouse_speed.setToolTip('Change mouse travel speed independently of action delays. Instant clicks move directly; drags keep a minimal travel time.')
+        self.mouse_speed.currentTextChanged.connect(lambda v:self.set_mouse_speed(v.lower()))
+        mouse_speed_group.addWidget(self.mouse_speed)
+
         typing_group=toolbar_group('TYPING STYLE')
         self.global_typing=QComboBox()
         self.global_typing.setObjectName('toolbarInput')
@@ -1719,7 +1734,7 @@ class MainWindow(QMainWindow):
             if not a.enabled:continue
             duration+=a.delay
             if a.kind=='wait' and a.wait_mode!='duration':duration+=min(a.wait_timeout,5.0)  # conditional estimate only
-            if a.kind in ('click','drag'):duration+=a.path_duration
+            if a.kind in ('click','drag'):duration+=a.path_duration*MOUSE_SPEED_FACTORS.get(self.project.mouse_speed_mode,1.0)
             if a.kind=='type' and self.project.global_typing_mode=='smooth':
                 duration+=len(a.text)*a.char_delay
             elif a.kind=='type' and self.project.global_typing_mode=='original':
@@ -1871,6 +1886,8 @@ class MainWindow(QMainWindow):
             self.global_mode.setCurrentText(self.project.cursor_mode.title())
         with QSignalBlocker(self.global_typing):
             self.global_typing.setCurrentText(self.project.global_typing_mode.title())
+        with QSignalBlocker(self.mouse_speed):
+            self.mouse_speed.setCurrentText(self.project.mouse_speed_mode.title())
         with QSignalBlocker(self.auto_wait_toggle):
             self.auto_wait_toggle.setChecked(self.project.adaptive_wait)
         self._metrics()
@@ -2148,6 +2165,12 @@ class MainWindow(QMainWindow):
         for a in targets:a.delay=self.uniform.value()
         self.dirty();self.refresh({a.id for a in targets} if rows else set())
         self.notice(f'Applied {self.uniform.value():.2f} sec gap to {len(targets)} step(s).')
+
+    def set_mouse_speed(self,mode):
+        if mode not in MOUSE_SPEED_FACTORS or self.project.mouse_speed_mode==mode:return
+        self.project.mouse_speed_mode=mode
+        self.dirty()
+        self.notice(f'Mouse travel speed: {mode.title()}')
 
     def set_typing_mode(self,mode):
         if mode not in ('original','smooth','instant') or mode==self.project.global_typing_mode:return
@@ -2628,7 +2651,8 @@ class MainWindow(QMainWindow):
                            typing_mode=self.project.global_typing_mode,
                            screen_bounds=self.project.screen_bounds if self.project.target_mode=='screen' else None,
                            recorded_window_bounds=self.project.recorded_window_bounds,
-                           adaptive_wait=self.project.adaptive_wait)
+                           adaptive_wait=self.project.adaptive_wait,
+                           mouse_speed_mode=self.project.mouse_speed_mode)
         self.prepared_secure={}
         self.player.progress.connect(self._on_progress)
         self.player.finished_result.connect(self._play_done)
