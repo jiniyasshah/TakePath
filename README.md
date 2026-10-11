@@ -48,9 +48,9 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 
 ### Capture and replay
 
-- **Clean floating dock:** draggable, top-center by default, with target selection, countdown, pause/stop, Replay and Retake states.
+- **Clean floating dock:** draggable, top-center by default, with target selection, countdown, pause/stop, Replay and Retake states. On Windows, the overlay passes mouse clicks through to the target app during active capture and replay so it cannot block browser address bars; use **F7** to pause/resume and **F8** to stop.
 - **Detailed action capture:** mouse clicks, moves, drags, scrolls, side buttons, typed text, and shortcuts.
-- **Global cursor presets:** Original, Smooth, Straight, and Gentle motion.
+- **Global cursor presets:** Original, Smooth, Straight, and Gentle motion, plus independent **Normal, Fast, Slow, or Instant** mouse travel speed. A zero action delay does not by itself make mouse motion instant.
 - **Global typing presets:** Original recorded rhythm, Smooth typing, or Instant insertion.
 - **Precise playback:** control timing per step, apply a uniform gap, change replay speed, and optionally center the cursor.
 - **Two-step replay:** the editor hides first; playback starts only when you press Play on the dock.

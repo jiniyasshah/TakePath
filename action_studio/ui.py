@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -690,6 +690,7 @@ class ControlDock(QWidget):
         if self.target_mode not in ('window','screen'):
             self.target_mode = 'window'
         self._no_activate = False
+        self._pointer_passthrough = False
         self._capture_exclusion_attempted = False
         root=V(self,(10,7,10,9),0)
         body=F('dockBody')
@@ -990,16 +991,39 @@ class ControlDock(QWidget):
             except Exception:
                 pass
 
-    def _avoid_stealing_focus(self, active):
-        if sys.platform != 'win32' or active == self._no_activate:
+    def _avoid_stealing_focus(self, active, pointer_passthrough=False):
+        """Make active recording/replay dock visible but transparent to mouse.
+
+        On Windows a translucent layered window needs WS_EX_TRANSPARENT
+        for clicks to reach the underlying browser (e.g. URL bar).
+        F7/F8 remain global pause/stop controls while click-through is on.
+        Never intercept a click just because the overlay crosses a target.
+        """
+        if sys.platform != 'win32':
+            return
+        desired=bool(pointer_passthrough)
+        if active == self._no_activate and desired == getattr(self,'_pointer_passthrough',False):
             return
         try:
             hwnd=int(self.winId())
             user32=ctypes.windll.user32
             flags=user32.GetWindowLongW(hwnd,-20)
             noactivate=0x08000000
-            user32.SetWindowLongW(hwnd,-20,flags | noactivate if active else flags & ~noactivate)
+            transparent=0x00000020
+            layered=0x00080000
+            updated=flags | noactivate if active else flags & ~noactivate
+            if desired:
+                updated |= transparent | layered
+            else:
+                updated &= ~transparent
+            if updated != flags:
+                user32.SetWindowLongW(hwnd,-20,updated)
+                # Tell Windows to update hit-testing after extended styles
+                # change; do not move or foreground the overlay.
+                user32.SetWindowPos(hwnd,0,0,0,0,0,
+                                   0x0001|0x0002|0x0004|0x0010|0x0020)
             self._no_activate=active
+            self._pointer_passthrough=desired
         except Exception:
             pass
 
@@ -1034,7 +1058,8 @@ class ControlDock(QWidget):
                 self.step_status.setText('Preparing replay…')
                 self.step_status.setToolTip('Waiting for the first action')
         self.pause.setToolTip('Continue after manual input (F7)' if waiting else 'Pause / resume (F7)')
-        self._avoid_stealing_focus(busy or ready)
+        self._avoid_stealing_focus(busy or ready, pointer_passthrough=recording or playing)
+        self.stop.setToolTip("Use F8 to stop while recording or replaying; mouse clicks pass through the dock" if (recording or playing) else "Stop (F8)")
         self.stop.setIcon(vector_icon('close','#FFFFFF') if pending else vector_icon('stop','#FFFFFF'))
         self.pause.setEnabled(recording or playing)
         if recording:
@@ -1054,7 +1079,8 @@ class ControlDock(QWidget):
             self.mode_status.setStyleSheet('color:#A2A9FF; font-weight:750;')
         if pending and not (recording or playing):
             self.clock.setText(str(self.owner.left_count))
-        self.stop.setToolTip('Cancel countdown' if pending else 'Stop (F8)')
+        if not (recording or playing):
+            self.stop.setToolTip('Cancel countdown' if pending else 'Stop (F8)')
 
     def closeEvent(self,event):
         if self.owner.busy():
@@ -1378,7 +1404,7 @@ class MainWindow(QMainWindow):
         self.canvas.picked.connect(self.select_index)
         self.canvas.moved.connect(self.move_canvas_point)
         up.addWidget(center,1)
-        inspector=F('card'); inspector.setFixedWidth(288)
+        inspector=F('card'); inspector.setFixedWidth(320)
         self.inspector_panel=inspector
         ins=V(inspector,(14,15,14,12),10)
         ins.addWidget(L('ACTION PROPERTIES','tiny'))
@@ -1388,6 +1414,7 @@ class MainWindow(QMainWindow):
         self.inspector_info.setWordWrap(True)
         ins.addWidget(self.inspector_info)
         scroller=QScrollArea(); scroller.setWidgetResizable(True)
+        scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         holder=QWidget(); holder.setObjectName('inspectorHolder'); form=V(holder,(3,6,3,10),9)
         self.enable=QCheckBox('Include in playback')
         self.enable.toggled.connect(lambda v:self._set('enabled',v))
@@ -1433,14 +1460,18 @@ class MainWindow(QMainWindow):
         secure_form.addLayout(secret_row)
         self.secret_remember=QCheckBox('Save securely on this Windows PC')
         secure_form.addWidget(self.secret_remember)
-        controls=H(spacing=6)
+        # These controls used to be placed side by side in a 288px inspector,
+        # forcing horizontal scrolling and clipping the password controls.
+        controls=V(spacing=5)
         controls.addWidget(B('Set value',self.set_secure_value,'primary'))
         controls.addWidget(B('Forget value',self.forget_secure_value,'quiet'))
         secure_form.addLayout(controls)
-        review=B('Review configured value',self.review_secure_value,'quiet',
-                 'Explicitly load the currently configured value into the masked field for verification')
+        review=B('Review value',self.review_secure_value,'quiet',
+                 'Explicitly load the configured value into the masked field for verification')
         secure_form.addWidget(review)
-        secure_form.addWidget(L('Values remain hidden unless you click the eye icon. They never go in project JSON.','muted'))
+        secret_help=L('Values stay hidden unless you click the eye icon. They never go in project JSON.','muted')
+        secret_help.setWordWrap(True)
+        secure_form.addWidget(secret_help)
         sv.addWidget(self.secure_autofill)
         form.addWidget(self.secure_container)
         self.key_container=QWidget(); self.key_container.setObjectName('propertyGroup'); kv=V(self.key_container,spacing=7)
@@ -1592,6 +1623,16 @@ class MainWindow(QMainWindow):
         self.global_mode.currentTextChanged.connect(lambda v:self.set_cursor_mode(v.lower()))
         cursor_group.addWidget(self.global_mode)
 
+        mouse_speed_group=toolbar_group('MOUSE SPEED')
+        self.mouse_speed=QComboBox()
+        self.mouse_speed.setObjectName('toolbarInput')
+        self.mouse_speed.setFixedWidth(106)
+        self.mouse_speed.addItems(['Normal','Fast','Slow','Instant'])
+        self.mouse_speed.setCurrentText(self.project.mouse_speed_mode.title())
+        self.mouse_speed.setToolTip('Change mouse travel speed independently of action delays. Instant clicks move directly; drags keep a minimal travel time.')
+        self.mouse_speed.currentTextChanged.connect(lambda v:self.set_mouse_speed(v.lower()))
+        mouse_speed_group.addWidget(self.mouse_speed)
+
         typing_group=toolbar_group('TYPING STYLE')
         self.global_typing=QComboBox()
         self.global_typing.setObjectName('toolbarInput')
@@ -1693,7 +1734,7 @@ class MainWindow(QMainWindow):
             if not a.enabled:continue
             duration+=a.delay
             if a.kind=='wait' and a.wait_mode!='duration':duration+=min(a.wait_timeout,5.0)  # conditional estimate only
-            if a.kind in ('click','drag'):duration+=a.path_duration
+            if a.kind in ('click','drag'):duration+=a.path_duration*MOUSE_SPEED_FACTORS.get(self.project.mouse_speed_mode,1.0)
             if a.kind=='type' and self.project.global_typing_mode=='smooth':
                 duration+=len(a.text)*a.char_delay
             elif a.kind=='type' and self.project.global_typing_mode=='original':
@@ -1845,6 +1886,8 @@ class MainWindow(QMainWindow):
             self.global_mode.setCurrentText(self.project.cursor_mode.title())
         with QSignalBlocker(self.global_typing):
             self.global_typing.setCurrentText(self.project.global_typing_mode.title())
+        with QSignalBlocker(self.mouse_speed):
+            self.mouse_speed.setCurrentText(self.project.mouse_speed_mode.title())
         with QSignalBlocker(self.auto_wait_toggle):
             self.auto_wait_toggle.setChecked(self.project.adaptive_wait)
         self._metrics()
@@ -1870,7 +1913,7 @@ class MainWindow(QMainWindow):
             self.inspector_info.setText(f'{len(rows)} steps selected. Press Delete selected to remove all at once.' if rows else 'Choose a step below or click its marker on the preview.')
             return
         a=self.project.actions[rows[0]]
-        self.inspector_title.setText(a.kind.title()+' action')
+        self.inspector_title.setText(a.kind.replace('_',' ').title()+' action')
         self.inspector_info.setText(a.label()[:120])
         self.updating=True
         controls=[(self.enable,'setChecked',a.enabled),(self.delay,'setValue',a.delay),
@@ -2122,6 +2165,12 @@ class MainWindow(QMainWindow):
         for a in targets:a.delay=self.uniform.value()
         self.dirty();self.refresh({a.id for a in targets} if rows else set())
         self.notice(f'Applied {self.uniform.value():.2f} sec gap to {len(targets)} step(s).')
+
+    def set_mouse_speed(self,mode):
+        if mode not in MOUSE_SPEED_FACTORS or self.project.mouse_speed_mode==mode:return
+        self.project.mouse_speed_mode=mode
+        self.dirty()
+        self.notice(f'Mouse travel speed: {mode.title()}')
 
     def set_typing_mode(self,mode):
         if mode not in ('original','smooth','instant') or mode==self.project.global_typing_mode:return
@@ -2602,7 +2651,8 @@ class MainWindow(QMainWindow):
                            typing_mode=self.project.global_typing_mode,
                            screen_bounds=self.project.screen_bounds if self.project.target_mode=='screen' else None,
                            recorded_window_bounds=self.project.recorded_window_bounds,
-                           adaptive_wait=self.project.adaptive_wait)
+                           adaptive_wait=self.project.adaptive_wait,
+                           mouse_speed_mode=self.project.mouse_speed_mode)
         self.prepared_secure={}
         self.player.progress.connect(self._on_progress)
         self.player.finished_result.connect(self._play_done)

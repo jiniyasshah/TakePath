@@ -15,6 +15,8 @@ WAIT_MODES = {"duration", "target_title", "active_title", "focused_safe", "focus
 MODES = {"original", "smooth", "straight", "gentle"}
 TEXT_MODES = {"human", "instant", "original", "smooth"}
 GLOBAL_TYPING_MODES = {"original", "smooth", "instant"}
+MOUSE_SPEED_MODES = {"normal", "fast", "slow", "instant"}
+MOUSE_SPEED_FACTORS = {"normal": 1.0, "fast": 0.3, "slow": 1.8, "instant": 0.0}
 SECURE_MODES = {"auto", "manual", "skip"}
 MAX_ACTIONS = 12000
 MAX_POINTS = 450
@@ -159,6 +161,7 @@ class Project:
     actions: list[Action] = field(default_factory=list)
     cursor_mode: str = "smooth"  # Global; keep original paths.
     global_typing_mode: str = "smooth"  # Original rhythm, smooth constant, instant.
+    mouse_speed_mode: str = "normal"  # Independent of action delays and typing speed.
     target_mode: str = "window"  # window: scoped to chosen app; screen: across foreground apps
     preview_jpeg: str = ""       # Optional local, window-scoped still image; not video.
     preview_bounds: list[int] = field(default_factory=lambda: [0, 0, 1920, 1080])
@@ -169,6 +172,7 @@ class Project:
         return {"schema": 2, "name": self.name, "target_title": self.target_title,
                 "screen_size": self.screen_size, "screen_bounds": self.screen_bounds,
                 "cursor_mode": self.cursor_mode, "global_typing_mode": self.global_typing_mode,
+                "mouse_speed_mode": self.mouse_speed_mode,
                 "target_mode": self.target_mode, "preview_jpeg": self.preview_jpeg,
                 "recorded_window_bounds": self.recorded_window_bounds,
                 "adaptive_wait": self.adaptive_wait,
@@ -207,6 +211,9 @@ class Project:
         global_typing = value.get('global_typing_mode', 'smooth')
         if global_typing not in GLOBAL_TYPING_MODES:
             global_typing = 'smooth'
+        mouse_speed = value.get('mouse_speed_mode', 'normal')
+        if mouse_speed not in MOUSE_SPEED_MODES:
+            mouse_speed = 'normal'
         window_anchor = value.get("recorded_window_bounds", [])
         if not isinstance(window_anchor, list) or len(window_anchor) != 4 or any(
             not isinstance(v,int) or abs(v)>100000 for v in window_anchor
@@ -215,7 +222,7 @@ class Project:
         return cls(name=str(value.get("name", "Untitled workflow"))[:160],
                    target_title=str(value.get("target_title", ""))[:500],
                    screen_size=screen, screen_bounds=bounds, actions=[Action.from_dict(a) for a in actions],
-                   cursor_mode=mode, global_typing_mode=global_typing, target_mode=value.get("target_mode", "window") if value.get("target_mode", "window") in ("window", "screen") else "window", preview_jpeg=preview, preview_bounds=preview_bounds,
+                   cursor_mode=mode, global_typing_mode=global_typing, mouse_speed_mode=mouse_speed, target_mode=value.get("target_mode", "window") if value.get("target_mode", "window") in ("window", "screen") else "window", preview_jpeg=preview, preview_bounds=preview_bounds,
                    recorded_window_bounds=window_anchor, adaptive_wait=(value.get("adaptive_wait") is True))
 
 
