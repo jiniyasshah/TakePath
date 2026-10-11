@@ -76,19 +76,28 @@ class Recorder(QObject):
         self.scope = "window"
         self.own_hwnd = 0
         self.recorded_window_bounds = []
-        self.interactive_bounds = None  # Physical desktop rectangle of clickable dock controls
+        self.interactive_bounds = None  # Clickable Pause/Stop control rectangle
+        self.interactive_grip_bounds = None  # Independent left drag-grip rectangle
         self.excluded_buttons = set()    # Suppress a complete control-button gesture
 
-    def set_interactive_bounds(self, rect):
-        """Update hit test rectangle from Qt GUI thread; no QWidget calls in hooks."""
+    def set_interactive_bounds(self, rect, grip_rect=None):
+        """Physical hit boxes of the two clickable control windows.
+
+        Keep the main status overlay click-through to the application below.
+        Hook threads use these simple coordinates, never QWidget methods.
+        """
         self.interactive_bounds = (tuple(rect) if rect and len(rect) == 4 else None)
+        self.interactive_grip_bounds = (
+            tuple(grip_rect) if grip_rect and len(grip_rect) == 4 else None)
 
     def _over_interactive_controls(self, x, y):
-        rect = self.interactive_bounds
-        if rect is None:
-            return False
-        left, top, width, height = rect
-        return left <= x < left + width and top <= y < top + height
+        for rect in (self.interactive_bounds, self.interactive_grip_bounds):
+            if rect is None:
+                continue
+            left, top, width, height = rect
+            if left <= x < left + width and top <= y < top + height:
+                return True
+        return False
 
     def begin(self, own_hwnd: int, target_hwnd: int = 0, scope: str = "window", capture_bounds=None, dock_bounds=None) -> bool:
         ok, reason = supported()
