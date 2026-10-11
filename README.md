@@ -50,7 +50,8 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 
 - **Clean floating dock:** draggable, top-center by default, with target selection, countdown, pause/stop, Replay and Retake states. On Windows, the overlay passes mouse clicks through to the target app during active capture and replay so it cannot block browser address bars; use **F7** to pause/resume and **F8** to stop.
 - **Detailed action capture:** mouse clicks, moves, drags, scrolls, side buttons, typed text, and shortcuts.
-- **Global cursor presets:** Original, Smooth, Straight, and Gentle motion, plus independent **Normal, Fast, Slow, or Instant** mouse travel speed. A zero action delay does not by itself make mouse motion instant.
+- **Mouse speed per action:** The global Normal/Fast/Slow/Instant speed is only the default. Right-click one selected click, drag, or scroll action—or select several and right-click—to choose **Mouse speed → Use global / Instant / Fast / Normal / Slow**. Each override is saved with its action, and mixed selections leave Wait, Type and Secure Input steps unchanged. A zero action delay does not by itself make mouse motion instant.
+- **Global cursor paths:** Original, Smooth, Straight, and Gentle movement styles remain available as separate global controls.
 - **Global typing presets:** Original recorded rhythm, Smooth typing, or Instant insertion.
 - **Precise playback:** control timing per step, apply a uniform gap, change replay speed, and optionally center the cursor.
 - **Two-step replay:** the editor hides first; playback starts only when you press Play on the dock.
