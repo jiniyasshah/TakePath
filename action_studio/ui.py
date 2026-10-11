@@ -15,15 +15,15 @@ import uuid
 from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QImage, QShortcut, QIcon
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFileIconProvider, QFrame, QGraphicsDropShadowEffect, QGridLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QScrollArea, QSpinBox, QSplitter, QStackedWidget, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
+    QScrollArea, QScrollBar, QSpinBox, QSplitter, QStackedWidget, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
     QTextEdit, QVBoxLayout, QWidget,
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -1176,6 +1176,69 @@ class SecurePreflightDialog(QDialog):
         return [(ref,edit.text(),self.remember[ref].isChecked()) for ref,edit in self.inputs.items()]
 
 
+class ActionTable(QTableWidget):
+    """Drag timeline rows without letting Qt rearrange individual cells.
+
+    The project (rather than the table widget) owns the action order. A
+    drop supplies the original selected rows and the insertion boundary
+    to MainWindow, which atomically reorders Action objects and refreshes
+    the visual list. Multiple selected rows retain their relative order.
+    """
+    actionsDropped = Signal(list, int)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setDropIndicatorShown(True)
+        self.setDragDropOverwriteMode(False)
+        self._dragged_rows = []
+
+    def startDrag(self, supported_actions):
+        self._dragged_rows = sorted({index.row() for index in self.selectedIndexes()})
+        if not self._dragged_rows:
+            return
+        try:
+            super().startDrag(Qt.MoveAction)
+        finally:
+            self._dragged_rows = []
+
+    def dragEnterEvent(self, event):
+        if event.source() is self:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() is self:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        # A built-in QTableWidget InternalMove can shift cell contents
+        # independently; never call the default drop handler.
+        rows = list(self._dragged_rows)
+        if event.source() is not self or not rows:
+            event.ignore()
+            return
+        point = event.position().toPoint()
+        index = self.indexAt(point)
+        if index.isValid():
+            target = index.row()
+            cell = self.visualRect(index)
+            if point.y() >= cell.center().y():
+                target += 1
+        else:
+            target = 0 if point.y() < 0 else self.rowCount()
+        event.acceptProposedAction()
+        # Let the native drag gesture finish before replacing table items.
+        QTimer.singleShot(0, lambda: self.actionsDropped.emit(rows, target))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1452,7 +1515,7 @@ class MainWindow(QMainWindow):
         ]
         for button in self.action_operation_buttons:bar.addWidget(button)
         low.addLayout(bar)
-        self.table=QTableWidget(0,5)
+        self.table=ActionTable(0,5)
         self.table.setHorizontalHeaderLabels(['STEP','TYPE','ACTION / TEXT','DELAY','ACTIVE'])
         self.table.verticalHeader().hide()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1465,6 +1528,8 @@ class MainWindow(QMainWindow):
             self.table.setColumnWidth(ix,width)
             self.table.horizontalHeader().setSectionResizeMode(ix,QHeaderView.Fixed)
         self.table.itemSelectionChanged.connect(self.selection_changed)
+        self.table.actionsDropped.connect(self.reorder_dragged_actions)
+        self.table.setToolTip('Hold and drag action rows to reorder them. Multiple selected rows move together.')
         low.addWidget(self.table,1)
         # V9: cohesive toolbar. Section captions sit ABOVE their controls,
         # avoiding nested boxed labels. It scrolls horizontally only on narrow
@@ -1685,7 +1750,7 @@ class MainWindow(QMainWindow):
             values=[f'{i+1:03d}',a.kind.upper(),a.label(),f'{a.delay:.2f} s','Yes' if a.enabled else 'No']
             for j,value in enumerate(values):
                 cell=QTableWidgetItem(value)
-                cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
                 if j in (0,3,4):cell.setTextAlignment(Qt.AlignCenter)
                 if j==1:cell.setForeground(QColor(colors.get(a.kind,'#CDD7E5')))
                 elif j in (0,3,4):cell.setForeground(QColor('#95A3B7'))
@@ -1943,6 +2008,24 @@ class MainWindow(QMainWindow):
         self.project.actions=remove_actions(self.project.actions,ids)
         self.dirty();self.refresh(set())
         self.notice(f'Removed {len(rows)} selected action(s).')
+
+    def reorder_dragged_actions(self, source_rows, before_row):
+        if self.busy():
+            return
+        if not source_rows:
+            return
+        selected_ids={self.project.actions[i].id for i in source_rows
+                      if 0<=i<len(self.project.actions)}
+        try:
+            reordered=reorder_actions(self.project.actions, source_rows, before_row)
+        except ValueError:
+            return
+        if all(a is b for a,b in zip(self.project.actions, reordered)):
+            return
+        self.project.actions=reordered
+        self.dirty()
+        self.refresh(selected_ids)
+        self.notice(f'Moved {len(source_rows)} action(s). Drag rows again to adjust the order.')
 
     def move_action(self,direction):
         if self.busy():return
