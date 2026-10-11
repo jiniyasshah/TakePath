@@ -1655,6 +1655,7 @@ class MainWindow(QMainWindow):
         self.is_dirty=False
         self.session_secrets={}  # memory-only; not written into projects / settings
         self.prepared_secure={}
+        self.portable_unlocked={}  # in-memory decrypted secure action IDs
         self._dock_taskbar_minimized=False
         try:
             self.credential_store=credential_store()
@@ -1821,8 +1822,14 @@ class MainWindow(QMainWindow):
         self.secret_reveal=password_reveal_button(self.secret_edit)
         secret_row.addWidget(self.secret_reveal)
         secure_form.addLayout(secret_row)
-        self.secret_remember=QCheckBox('Save securely on this Windows PC')
+        self.secret_remember=QCheckBox('Remember securely on this device (Windows Credential Manager / Keychain)')
+        self.secret_remember.setChecked(bool(self.credential_store))
+        self.secret_remember.setEnabled(bool(self.credential_store))
         secure_form.addWidget(self.secret_remember)
+        self.secret_apply_all=QCheckBox('Use for all auto-fill secure input steps')
+        self.secret_apply_all.setToolTip('Opt in only if every protected field requires the same value.')
+        self.secret_apply_all.setChecked(False)
+        secure_form.addWidget(self.secret_apply_all)
         # These controls used to be placed side by side in a 288px inspector,
         # forcing horizontal scrolling and clipping the password controls.
         controls=V(spacing=5)
@@ -2466,6 +2473,7 @@ class MainWindow(QMainWindow):
             with QSignalBlocker(self.secure_mode):
                 self.secure_mode.setCurrentIndex(max(0,self.secure_mode.findData(a.secure_mode)))
             self.secret_reveal.setChecked(False)
+            self.secret_apply_all.setChecked(False)
             self.secret_edit.clear()   # only review on explicit request
             self._secure_status(a)
         self.key_container.setVisible(a.kind=='key')
@@ -2512,7 +2520,7 @@ class MainWindow(QMainWindow):
         if a.secure_ref and self.credential_store:
             try:persisted=self.credential_store.get(a.secure_ref) is not None
             except CredentialError:pass
-        self.secret_status.setText('● Saved in Windows Credential Manager' if persisted else
+        self.secret_status.setText('● Saved in system credential store' if persisted else
                                    '● Ready for this session' if session else
                                    '○ Missing · will ask before replay')
 
@@ -2537,6 +2545,12 @@ class MainWindow(QMainWindow):
         a.kind='secure_input'; a.text=''; a.key='enter'; a.secure_mode='auto'; a.secure_ref=''
         self.dirty();self.refresh({a.id})
 
+    def _secure_targets(self, selected):
+        if self.secret_apply_all.isChecked():
+            return [a for a in self.project.actions
+                    if a.kind=='secure_input' and a.secure_mode=='auto']
+        return [selected]
+
     def set_secure_value(self):
         if self.busy():return
         a=self._selected_secure()
@@ -2544,25 +2558,36 @@ class MainWindow(QMainWindow):
         try:secret=validate_password(self.secret_edit.text())
         except ValueError as exc:
             QMessageBox.warning(self,'Secure input',str(exc));return
+        targets=self._secure_targets(a)
+        if not targets:return
         if self.secret_remember.isChecked():
             if not self.credential_store:
                 QMessageBox.warning(self,'Secure storage unavailable',
-                    'Windows Credential Manager is unavailable. Uncheck Save securely to use session-only storage.')
+                    'System credential storage is unavailable. Uncheck Remember for session-only values.')
                 return
-            ref=a.secure_ref if valid_reference(a.secure_ref) else uuid.uuid4().hex
+            # Never overwrite a credential shared with a different action when
+            # editing just one secure step: detach it to a fresh reference.
+            other_refs={other.secure_ref for other in self.project.actions
+                        if other not in targets and valid_reference(other.secure_ref)}
+            reuse=(len(targets)==1 and valid_reference(a.secure_ref)
+                   and a.secure_ref not in other_refs)
+            ref=a.secure_ref if reuse else uuid.uuid4().hex
             try:self.credential_store.set(ref,secret)
             except (CredentialError,ValueError) as exc:
                 QMessageBox.warning(self,'Secure storage failed',str(exc));return
-            a.secure_ref=ref
-            self.session_secrets.pop(a.id,None)
-            self.session_secrets.pop(ref,None)
+            for target in targets:
+                self.session_secrets.pop(target.id,None)
+                if target.secure_ref:self.session_secrets.pop(target.secure_ref,None)
+                target.secure_ref=ref
             self.dirty()
         else:
-            self.session_secrets[self._secret_key(a)]=secret
+            for target in targets:
+                self.session_secrets[self._secret_key(target)]=secret
         self.secret_reveal.setChecked(False)
+        self.secret_apply_all.setChecked(False)
         self.secret_edit.clear()
         self._secure_status(a)
-        self.notice('Secure input configured; its value is not stored in the project.')
+        self.notice(f'Secure value applied to {len(targets)} step(s); no plaintext in project JSON.')
 
     def review_secure_value(self):
         """User-triggered review only: never automatically unmask saved secrets."""
@@ -2589,9 +2614,15 @@ class MainWindow(QMainWindow):
         if a is None:return
         keys={a.id,self._secret_key(a)}
         if a.secure_ref and self.credential_store:
-            try:self.credential_store.delete(a.secure_ref)
-            except CredentialError as exc:
-                QMessageBox.warning(self,'Could not remove stored value',str(exc));return
+            # Shared credential must survive removing it from one action.
+            shared=any(other is not a and other.secure_ref==a.secure_ref
+                       for other in self.project.actions)
+            if not shared:
+                try:self.credential_store.delete(a.secure_ref)
+                except CredentialError as exc:
+                    QMessageBox.warning(self,'Could not remove stored value',str(exc));return
+            a.secure_ref=''
+            self.dirty()
         for key in keys:self.session_secrets.pop(key,None)
         self.secret_reveal.setChecked(False)
         self.secret_edit.clear()
@@ -2789,6 +2820,7 @@ class MainWindow(QMainWindow):
         if self.busy() or not self._discard_ok():return
         self.session_secrets.clear()
         self.prepared_secure.clear()
+        self.portable_unlocked.clear()
         self.take_history.clear()
         self.project=Project(cursor_mode=self.settings.value('cursor_mode','smooth'),
                              global_typing_mode=self.settings.value('typing_mode','smooth'))
@@ -2803,6 +2835,7 @@ class MainWindow(QMainWindow):
             path=Path(__file__).resolve().parent.parent/'examples'/'tutorial_demo.vas.json'
             self.session_secrets.clear()
             self.prepared_secure.clear()
+            self.portable_unlocked.clear()
             self.take_history.clear()
             self.project=load_project(path)
             self.project_path=None;self.is_dirty=False
@@ -2819,6 +2852,7 @@ class MainWindow(QMainWindow):
         try:
             self.session_secrets.clear()
             self.prepared_secure.clear()
+            self.portable_unlocked.clear()
             self.take_history.clear()
             self.project=load_project(path)
             self.project_path=Path(path)
@@ -3065,6 +3099,7 @@ class MainWindow(QMainWindow):
         self.playback_completed=False
         self.session_secrets.clear()
         self.prepared_secure.clear()
+        self.portable_unlocked.clear()
         # A still image is captured only after explicit recording stops, not continuously.
         self.project.actions=actions
         self.project.target_mode=self.pending_record_scope
