@@ -318,6 +318,10 @@ class Player(QThread):
         raise RuntimeError("Unknown Wait condition")
 
     def _run_wait_action(self, a: Action):
+        if a.wait_mode == "duration":
+            # The duration is handled once in _action; never add a
+            # second timeout or ask for a window/control name.
+            return
         if a.wait_mode in ("target_title", "active_title", "control_name") and not a.wait_value.strip():
             raise RuntimeError("Wait condition needs a window or control name")
         try:
@@ -335,7 +339,12 @@ class Player(QThread):
         import pyautogui as pg
         # Briefly tolerate the *same* window regaining focus between steps.
         # Never recover focus mid-click, mid-drag, or mid-keystroke.
-        self._wait(a.delay / self.speed, recover_focus=True)
+        if a.kind == "wait" and a.wait_mode == "duration":
+            # A fixed pause is wall-clock time for a screen demo.
+            # Keep checking the original target and F8 during the pause.
+            self._wait(a.delay, recover_focus=True)
+        else:
+            self._wait(a.delay / self.speed, recover_focus=True)
         self._guard(recover_focus=True)
         if a.kind == "wait":
             self._run_wait_action(a)
