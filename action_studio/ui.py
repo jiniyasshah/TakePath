@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -787,6 +787,12 @@ class ControlDock(QWidget):
         self.clock=L('00:00','recordClock')
         self.clock.setMinimumWidth(78)
         row.addWidget(self.clock)
+        self.step_status=L('','muted')
+        self.step_status.setFixedWidth(230)
+        self.step_status.setStyleSheet('color:#C6D2F5; font-size:11px; font-weight:650;')
+        self.step_status.setToolTip('Current replay action')
+        self.step_status.setVisible(False)
+        row.addWidget(self.step_status)
         self.secure_hint=L('Manual input in app','muted')
         self.secure_hint.setStyleSheet('color:#C2CBF4; font-size:11px; font-weight:600;')
         self.secure_hint.setVisible(False)
@@ -1015,6 +1021,18 @@ class ControlDock(QWidget):
         self.edit_dock.setFixedWidth(135 if show_editor_label else 38)
         waiting = bool(playing and self.owner.player.awaiting_secure_input)
         self.secure_hint.setVisible(waiting)
+        self.step_status.setVisible(playing)
+        if playing:
+            index=self.owner.last_playback_step
+            if 0 <= index < len(self.owner.project.actions):
+                summary=format_replay_step(self.owner.project.actions[index],index,
+                                           len(self.owner.project.actions))
+                self.step_status.setText(self.step_status.fontMetrics().elidedText(
+                    summary, Qt.ElideRight, self.step_status.width()-5))
+                self.step_status.setToolTip(summary)
+            else:
+                self.step_status.setText('Preparing replay…')
+                self.step_status.setToolTip('Waiting for the first action')
         self.pause.setToolTip('Continue after manual input (F7)' if waiting else 'Pause / resume (F7)')
         self._avoid_stealing_focus(busy or ready)
         self.stop.setIcon(vector_icon('close','#FFFFFF') if pending else vector_icon('stop','#FFFFFF'))
@@ -2577,6 +2595,7 @@ class MainWindow(QMainWindow):
         # Do not bring the full editor to the front during replay.
         if 0<=i<len(self.project.actions):
             self.status_line.setText(f'Running step {i+1} / {len(self.project.actions)}')
+        self.dock.sync()
 
     def _adaptive_wait_status(self, waiting):
         self.player_waiting_for_ui=bool(waiting)
