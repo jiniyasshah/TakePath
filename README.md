@@ -48,7 +48,8 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 
 ### Capture and replay
 
-- **Clean floating dock:** draggable, top-center by default, with target selection, countdown, pause/stop, Replay and Retake states. On Windows, the overlay passes mouse clicks through to the target app during active capture and replay so it cannot block browser address bars; use **F7** to pause/resume and **F8** to stop.
+- **Smart click-through dock (Windows):** while recording or replaying, the floating status bar lets mouse clicks reach the underlying app (including browser address bars), while a **separate small controller** keeps **Pause, Stop and a drag handle clickable with the mouse**. **F7/F8** continue to work. Controller clicks and drags are excluded from the recorded actions.
+- **Optional compact mode:** click the controller's compact/expand button during recording or replay. Your preference persists between sessions, and the normal full dock returns when the session ends. The controller follows the dock when you drag it.
 - **Detailed action capture:** mouse clicks, moves, drags, scrolls, side buttons, typed text, and shortcuts.
 - **Mouse speed per action:** The global Normal/Fast/Slow/Instant speed is only the default. Right-click one selected click, drag, or scroll action—or select several and right-click—to choose **Mouse speed → Use global / Instant / Fast / Normal / Slow**. Each override is saved with its action, and mixed selections leave Wait, Type and Secure Input steps unchanged. A zero action delay does not by itself make mouse motion instant.
 - **Global cursor paths:** Original, Smooth, Straight, and Gentle movement styles remain available as separate global controls.
