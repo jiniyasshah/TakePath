@@ -672,6 +672,68 @@ class DockDragHandle(QPushButton):
         super().mouseReleaseEvent(event)
 
 
+class DockControlIsland(QWidget):
+    """Separate interactive window above the click-through recording status.
+
+    Its own HWND is intentionally NOT mouse-transparent. The status dock's
+    HWND can forward clicks to Brave while this little controller still gets
+    button and drag events. Windows WS_EX_NOACTIVATE avoids stealing focus.
+    """
+    def __init__(self, dock):
+        flags=Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        if sys.platform == 'win32':
+            flags |= Qt.WindowDoesNotAcceptFocus
+        super().__init__(None, flags)
+        self.dock=dock
+        self.setObjectName('dockControlIsland')
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setFixedSize(196, 64)
+        layout=V(self,(3,3,3,3),0)
+        frame=F('dockBody')
+        layout.addWidget(frame)
+        actions=H(frame,(6,1,6,1),4)
+        self.drag_handle=DockDragHandle(dock)
+        self.drag_handle.setToolTip('Drag here to move the recording dock')
+        actions.addWidget(self.drag_handle)
+        self.pause=icon_button('pause',dock.owner.toggle_pause,'Pause or resume (F7)')
+        self.pause.setAccessibleName('Pause or resume recording or replay')
+        actions.addWidget(self.pause)
+        self.stop=icon_button('stop',dock.owner.stop,'Stop recording or replay (F8)',
+                              'stopOrb','#FFFFFF',20)
+        self.stop.setAccessibleName('Stop recording or replay')
+        actions.addWidget(self.stop)
+        self.compact=icon_button('minus',lambda:dock.set_compact_mode(not dock.compact_active),
+                                  'Toggle compact recording dock')
+        self.compact.setAccessibleName('Toggle compact dock')
+        actions.addWidget(self.compact)
+        self._excluded_from_capture=False
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        if sys.platform != 'win32':
+            return
+        try:
+            hwnd=int(self.winId())
+            user32=ctypes.windll.user32
+            current=user32.GetWindowLongW(hwnd,-20)
+            user32.SetWindowLongW(hwnd,-20,(current | 0x08000000) & ~0x00000020)
+            # HWND_TOPMOST, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE |
+            # SWP_NOOWNERZORDER | SWP_FRAMECHANGED.
+            user32.SetWindowPos(hwnd,-1,0,0,0,0,
+                                0x0010|0x0002|0x0001|0x0200|0x0020)
+            if not self._excluded_from_capture:
+                self._excluded_from_capture=bool(user32.SetWindowDisplayAffinity(hwnd,0x11))
+        except Exception:
+            pass
+
+    def update_controls(self, paused, compact):
+        self.pause.setIcon(vector_icon('play' if paused else 'pause'))
+        self.pause.setToolTip('Resume (F7)' if paused else 'Pause (F7)')
+        self.compact.setIcon(vector_icon('plus' if compact else 'minus'))
+        self.compact.setToolTip('Expand dock' if compact else 'Compact dock')
+
+
 class ControlDock(QWidget):
     """Compact floating record bar. Editing controls stay in the editor."""
     def __init__(self, owner):
