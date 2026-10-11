@@ -180,6 +180,7 @@ class Project:
     preview_bounds: list[int] = field(default_factory=lambda: [0, 0, 1920, 1080])
     recorded_window_bounds: list[int] = field(default_factory=list)  # Original capture window anchor
     adaptive_wait: bool = True  # Best-effort visual readiness, configurable in editor
+    encrypted_secrets: dict = field(default_factory=dict)  # Explicit portable export only; never plaintext
 
     def to_dict(self) -> dict:
         return {"schema": 2, "name": self.name, "target_title": self.target_title,
@@ -189,6 +190,7 @@ class Project:
                 "target_mode": self.target_mode, "preview_jpeg": self.preview_jpeg,
                 "recorded_window_bounds": self.recorded_window_bounds,
                 "adaptive_wait": self.adaptive_wait,
+                "encrypted_secrets": self.encrypted_secrets,
                 "preview_bounds": self.preview_bounds, "actions": [
                     ({**asdict(a), "text": "", "key": "enter", "char_timings": []} if a.kind == "secure_input" else asdict(a))
                     for a in self.actions]}
@@ -232,11 +234,16 @@ class Project:
             not isinstance(v,int) or abs(v)>100000 for v in window_anchor
         ) or window_anchor[2]<=0 or window_anchor[3]<=0:
             window_anchor=[]
+        encrypted=value.get("encrypted_secrets", {})
+        if (not isinstance(encrypted,dict) or
+                len(json.dumps(encrypted)) > 2_000_000):
+            encrypted={}
         return cls(name=str(value.get("name", "Untitled workflow"))[:160],
                    target_title=str(value.get("target_title", ""))[:500],
                    screen_size=screen, screen_bounds=bounds, actions=[Action.from_dict(a) for a in actions],
                    cursor_mode=mode, global_typing_mode=global_typing, mouse_speed_mode=mouse_speed, target_mode=value.get("target_mode", "window") if value.get("target_mode", "window") in ("window", "screen") else "window", preview_jpeg=preview, preview_bounds=preview_bounds,
-                   recorded_window_bounds=window_anchor, adaptive_wait=(value.get("adaptive_wait") is True))
+                   recorded_window_bounds=window_anchor, adaptive_wait=(value.get("adaptive_wait") is True),
+                   encrypted_secrets=encrypted)
 
 
 
