@@ -29,7 +29,9 @@ class ReorderActionsTests(unittest.TestCase):
         moved=reorder_actions(self.actions,[4],0)
         self.assertEqual(moved[0].kind,'wait')
         self.assertEqual(moved[0].delay,3)
-        self.assert_order(moved,[4,0,1,2,3,5])
+        self.assertEqual([a.id for a in moved], [self.ids[i] for i in [4,0,1,2,3,5]])
+        self.assertIs(moved[0],self.actions[4])
+        self.assertEqual([a.x for a in moved[1:]],[0,1,2,3,5])
 
     def test_multi_selected_action_drag_preserves_relative_order(self):
         self.assert_order(reorder_actions(self.actions,[1,3],6),[0,2,4,5,1,3])
