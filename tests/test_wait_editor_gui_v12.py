@@ -403,6 +403,99 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertTrue(island.isWindow())
         self.assertIsNone(island.parentWidget())
         self.assertTrue(dock.isWindow())
+    def test_type_context_shows_typing_not_mouse_controls(self):
+        action=self.Action(kind='type',text='example',char_delay=.1)
+        self.editor.project.actions=[action]
+        self.editor.refresh({action.id})
+        menu=self.editor.build_action_context_menu(
+            self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
+        labels=[item.text() for item in menu.actions()]
+        self.assertIn('Typing speed',labels)
+        self.assertNotIn('Mouse speed',labels)
+        self.assertNotIn('Wait duration',labels)
+        typing=next(item.menu() for item in menu.actions()
+                    if item.text()=='Typing speed')
+        fast=next(item for item in typing.actions() if item.text()=='Fast')
+        fast.trigger()
+        self.assertEqual(action.typing_speed_override,'fast')
+        self.assertEqual(self.editor._rows(),[0])
+        self.assertIn('Typing: Fast',self.editor.table.item(0,2).text())
+
+    def test_mixed_type_wait_mouse_selection_shows_relevant_categories(self):
+        from PySide6.QtWidgets import QTableWidgetSelectionRange
+        actions=[self.Action(kind='click'),self.Action(kind='type',text='test'),
+                 self.Action(kind='wait',delay=3,wait_mode='duration'),
+                 self.Action(kind='secure_input',secure_mode='skip'),
+                 self.Action(kind='key',key='enter')]
+        self.editor.project.actions=actions
+        self.editor.refresh(set())
+        self.editor.table.setRangeSelected(QTableWidgetSelectionRange(0,0,4,4),True)
+        pos=self.editor.table.visualRect(self.editor.table.model().index(1,0)).center()
+        menu=self.editor.build_action_context_menu(pos)
+        labels=[item.text() for item in menu.actions()]
+        for label in ('Mouse speed','Typing speed','Wait duration'):
+            self.assertIn(label,labels)
+        typing=next(item.menu() for item in menu.actions() if item.text()=='Typing speed')
+        next(item for item in typing.actions() if item.text()=='Slow').trigger()
+        self.assertEqual([a.typing_speed_override for a in actions],
+                         ['inherit','slow','inherit','inherit','inherit'])
+        self.assertEqual(self.editor._rows(),[0,1,2,3,4])
+
+    def test_fixed_wait_context_has_wait_duration_but_no_speed_menu(self):
+        a=self.Action(kind='wait',wait_mode='duration',delay=3)
+        self.editor.project.actions=[a]
+        self.editor.refresh({a.id})
+        pos=self.editor.table.visualRect(self.editor.table.model().index(0,0)).center()
+        menu=self.editor.build_action_context_menu(pos)
+        labels=[item.text() for item in menu.actions()]
+        self.assertIn('Wait duration',labels)
+        self.assertNotIn('Mouse speed',labels)
+        self.assertNotIn('Typing speed',labels)
+        times=next(item.menu() for item in menu.actions() if item.text()=='Wait duration')
+        next(item for item in times.actions() if item.text()=='5 seconds').trigger()
+        self.assertEqual(a.delay,5)
+
+    def test_unrelated_context_row_immediately_closes_hovered_mouse_submenu(self):
+        from PySide6.QtWidgets import QApplication
+        a=self.Action(kind='click')
+        self.editor.project.actions=[a]
+        self.editor.refresh({a.id})
+        pos=self.editor.table.visualRect(self.editor.table.model().index(0,0)).center()
+        menu=self.editor.build_action_context_menu(pos)
+        submenu=next(item.menu() for item in menu.actions() if item.text()=='Mouse speed')
+        disable=next(item for item in menu.actions() if item.text()=='Disable selected')
+        menu.show()
+        submenu.show()
+        QApplication.processEvents()
+        self.assertTrue(submenu.isVisible())
+        menu.hovered.emit(disable)
+        self.assertFalse(submenu.isVisible(), 'Mouse speed submenu remained open on Disable')
+        menu.hide()
+
+    def test_compact_replay_dock_auto_shrinks_and_sidecar_is_adjacent(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        dock=self.editor.dock
+        old=dock.compact_active
+        flag=SimpleNamespace(is_set=lambda:False)
+        try:
+            dock.set_compact_mode(True)
+            self.editor.player=SimpleNamespace(
+                isRunning=lambda:True,awaiting_secure_input=False,pause_flag=flag)
+            with patch.object(dock,'_avoid_stealing_focus'), \
+                 patch('action_studio.ui.window_rect',return_value=[500,30,196,64]):
+                dock.show()
+                dock.sync()
+                self.qt.processEvents()
+                self.assertEqual(dock.width(),332)
+                self.assertFalse(dock.clock.isVisible())
+                self.assertTrue(dock.step_status.isVisible())
+                self.assertGreaterEqual(dock.control_island.x(), dock.x()+dock.width()-12)
+        finally:
+            self.editor.player=None
+            dock.set_compact_mode(old)
+            dock.hide()
+
 
 if __name__=='__main__':
     unittest.main()
