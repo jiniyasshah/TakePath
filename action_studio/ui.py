@@ -1734,6 +1734,8 @@ class MainWindow(QMainWindow):
         hb.addWidget(self.name)
         hb.addStretch(1)
         hb.addWidget(B('Save',self.save,'outline','Save project · Ctrl+S'))
+        hb.addWidget(B('Export encrypted…',self.export_encrypted_project,'outline',
+                       'Create a portable copy with passphrase-encrypted secure inputs'))
         hb.addWidget(B('Back to recorder',self.show_dock,'quiet'))
         hb.addWidget(B('New capture',self.prepare_new_capture,'outline','Close editor and return to the recorder bar'))
         hb.addWidget(B('▶  Replay',self.prepare_replay,'primary','Switch to replay dock. Press Play there to start.'))
@@ -2520,8 +2522,11 @@ class MainWindow(QMainWindow):
         if a.secure_ref and self.credential_store:
             try:persisted=self.credential_store.get(a.secure_ref) is not None
             except CredentialError:pass
+        has_bundle=bool(self.project.encrypted_secrets)
         self.secret_status.setText('● Saved in system credential store' if persisted else
                                    '● Ready for this session' if session else
+                                   '● Encrypted portable input · unlock when replaying'
+                                   if has_bundle else
                                    '○ Missing · will ask before replay')
 
     def _change_secure_mode(self,index):
@@ -2908,6 +2913,40 @@ class MainWindow(QMainWindow):
         self.dock.show()
         self.dock.sync()
 
+    def export_encrypted_project(self):
+        """Export an encrypted copy. Ordinary Save keeps raw secrets out."""
+        if self.busy():return False
+        auto=[a for a in self.project.actions
+              if a.kind=='secure_input' and a.secure_mode=='auto' and a.enabled]
+        if not auto:
+            QMessageBox.information(self,'No secure steps',
+                'There are no enabled auto-fill secure inputs to encrypt.')
+            return False
+        if not self._prepare_secure_values():return False
+        prompt=PortablePassphraseDialog(self._visible_dialog_parent(),confirm=True)
+        try:
+            if _foreground_dialog(prompt).exec()!=QDialog.Accepted:return False
+            path,_=QFileDialog.getSaveFileName(self._visible_dialog_parent(),
+                'Export portable encrypted workflow',
+                str(Path.home()/'Encrypted workflow.vas.json'),
+                'TakePath projects (*.vas.json)')
+            if not path:return False
+            if not path.lower().endswith('.vas.json'):
+                path=path[:-5]+'.vas.json' if path.lower().endswith('.json') else path+'.vas.json'
+            snapshot=copy.deepcopy(self.project)
+            secrets={a.id:self.prepared_secure[a.id] for a in auto}
+            snapshot.encrypted_secrets=encrypt_secret_bundle(secrets,prompt.passphrase())
+            save_project(snapshot,Path(path))
+            self.notice('Encrypted portable project exported. Keep its passphrase safe.')
+            return True
+        except (PortableSecretError,ValueError,OSError,KeyError) as exc:
+            QMessageBox.warning(self,'Encrypted export failed',str(exc))
+            return False
+        finally:
+            self.prepared_secure.clear()
+            prompt.clear_passphrase()
+            prompt.close()
+
     def show_editor(self):
         if self.busy():return
         self._dock_taskbar_minimized=False
@@ -3182,12 +3221,55 @@ class MainWindow(QMainWindow):
                 available[key]=secret
             else:
                 missing[key]=f'Step {index+1} · Secure input'
+        # Portable secrets are authenticated and decrypted into RAM only.
+        if missing and self.project.encrypted_secrets:
+            if not self.portable_unlocked:
+                unlock=PortablePassphraseDialog(self._visible_dialog_parent())
+                if _foreground_dialog(unlock).exec()!=QDialog.Accepted:
+                    unlock.clear_passphrase()
+                    return False
+                try:
+                    self.portable_unlocked=decrypt_secret_bundle(
+                        self.project.encrypted_secrets,unlock.passphrase())
+                except PortableSecretError as exc:
+                    _warn_in_front(self._visible_dialog_parent(),
+                                   'Cannot unlock portable credentials',str(exc))
+                    return False
+                finally:
+                    unlock.clear_passphrase()
+                    unlock.close()
+            for a_id,key in key_by_action.items():
+                if key in missing and a_id in self.portable_unlocked:
+                    available[key]=self.portable_unlocked[a_id]
+                    missing.pop(key,None)
         if missing:
-            dlg=SecurePreflightDialog(list(missing.items()),self.dock,allow_save=bool(self.credential_store))
+            dlg=SecurePreflightDialog(list(missing.items()),self._visible_dialog_parent(),
+                                      allow_save=bool(self.credential_store))
             if _foreground_dialog(dlg).exec()!=QDialog.Accepted:return False
             submitted=dlg.submitted()
+            reuse_all=dlg.apply_all.isChecked() and len(submitted)>1
             for entry in dlg.inputs.values():entry.clear()
-            for key,secret,save_on_pc in submitted:
+            if reuse_all:
+                shared_secret=submitted[0][1]
+                if submitted[0][2] and self.credential_store:
+                    shared_ref=uuid.uuid4().hex
+                    try:self.credential_store.set(shared_ref,shared_secret)
+                    except (CredentialError,ValueError) as exc:
+                        _warn_in_front(self._visible_dialog_parent(),
+                            'Secure storage failed',str(exc)+'\n\nReplay has not started.')
+                        return False
+                    missing_keys={key for key,_,_ in submitted}
+                    for a in self.project.actions:
+                        if a.id in key_by_action and key_by_action[a.id] in missing_keys:
+                            a.secure_ref=shared_ref
+                            key_by_action[a.id]=shared_ref
+                    available[shared_ref]=shared_secret
+                    self.dirty()
+                else:
+                    for key,_,_ in submitted:
+                        available[key]=shared_secret
+                        self.session_secrets[key]=shared_secret
+            for key,secret,save_on_pc in ([] if reuse_all else submitted):
                 # A key may be the action's ID if no secure reference exists.
                 if save_on_pc and self.credential_store:
                     ref=key if valid_reference(key) and any(a.secure_ref==key for a in self.project.actions) else uuid.uuid4().hex
