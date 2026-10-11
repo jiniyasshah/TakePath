@@ -52,6 +52,7 @@ QFrame#dockBodyJoinedLeft { background: #12141C; border: 1px solid #2B303D;
 QFrame#dockBodyJoinedRight { background: #12141C; border: 1px solid #2B303D;
   border-left: 0px; border-top-left-radius: 0px; border-bottom-left-radius: 0px;
   border-top-right-radius: 23px; border-bottom-right-radius: 23px; }
+QWidget#dockGripOverlay { background: transparent; }
 QWidget#dockPage, QStackedWidget#dockStack { background: transparent; }
 QWidget#propertyGroup, QWidget#inspectorHolder { background: transparent; }
 QFrame#topBar { background: #10131A; border-bottom: 1px solid #252B37; }
@@ -696,8 +697,9 @@ class DockControlIsland(QWidget):
     """Separate interactive window above the click-through recording status.
 
     Its own HWND is intentionally NOT mouse-transparent. The status dock's
-    HWND can forward clicks to Brave while this little controller still gets
-    button and drag events. Windows WS_EX_NOACTIVATE avoids stealing focus.
+    HWND can forward clicks to Brave while Pause/Stop and expand remain
+    interactive. The drag grip now has a separate window at the far left.
+    Windows WS_EX_NOACTIVATE avoids stealing focus.
     """
     def __init__(self, dock):
         flags=Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
