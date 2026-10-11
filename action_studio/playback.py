@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from PySide6.QtCore import QThread, Signal
-from .core import Action, interpolate_path, anchor_original_path, MOUSE_SPEED_FACTORS
+from .core import Action, interpolate_path, anchor_original_path, MOUSE_SPEED_FACTORS, effective_mouse_speed
 from .recorder import foreground, center_cursor
 from .platform_api import window_pid, supported, focus_status, title_of, named_control_available, window_rect
 from .window_geometry import remap_action, valid_rect
@@ -225,14 +225,17 @@ class Player(QThread):
             prev = stamp
         self._move(*dest)
 
-    def _mouse_duration(self, duration: float, *, dragging: bool = False) -> float:
-        # Recorded per-action mouse travel time is independent of its delay.
-        # Fast moves need fewer frames, and Instant clicks can jump directly.
-        seconds = max(0.0, float(duration)) * MOUSE_SPEED_FACTORS[self.mouse_speed_mode]
+    def _mouse_duration(self, duration: float, *, dragging: bool = False,
+                        action: Action | None = None) -> float:
+        # Resolve an individual action's speed override only for mouse
+        # actions. Keep delays, typing and fixed Wait steps unchanged.
+        mode = (effective_mouse_speed(action, self.mouse_speed_mode)
+                if action is not None else self.mouse_speed_mode)
+        seconds = max(0.0, float(duration)) * MOUSE_SPEED_FACTORS[mode]
         return max(0.06, seconds) if dragging else seconds
 
     def _cursor(self, a: Action, x: int, y: int, *, dragging: bool = False):
-        duration = self._mouse_duration(a.path_duration, dragging=dragging)
+        duration = self._mouse_duration(a.path_duration, dragging=dragging, action=a)
         if duration == 0:
             self._move(x, y)
             return
@@ -386,19 +389,19 @@ class Player(QThread):
             else:
                 pg.click(button=a.button)
         elif a.kind == "drag":
-            self._smooth_move(a.x, a.y, self._mouse_duration(0.18))
+            self._smooth_move(a.x, a.y, self._mouse_duration(0.18, action=a))
             self._guard()
             press_mouse(a.button)
             try:
                 if self.cursor_mode == 'original' and len(a.raw_path) > 1:
                     self._original_move(a.raw_path, (a.end_x, a.end_y),
-                                        self._mouse_duration(a.path_duration, dragging=True))
+                                        self._mouse_duration(a.path_duration, dragging=True, action=a))
                 else:
                     self._cursor(a,a.end_x,a.end_y,dragging=True)
             finally:
                 release_mouse(a.button)
         elif a.kind == "scroll":
-            self._smooth_move(a.x, a.y, self._mouse_duration(0.15))
+            self._smooth_move(a.x, a.y, self._mouse_duration(0.15, action=a))
             steps = max(abs(a.dy), abs(a.dx), 1)
             for i in range(steps):
                 self._guard()
