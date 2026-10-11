@@ -737,6 +737,70 @@ class EditorWaitSmokeTests(unittest.TestCase):
             dock.set_compact_mode(old)
             dock.hide()
 
+    def test_encrypted_save_open_and_export_require_no_passphrase_dialog(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from action_studio.core import Project
+        from action_studio.encrypted_projects import load_encrypted_project
+        saved={}
+        store=SimpleNamespace(
+            set=lambda ref,value:saved.__setitem__(ref,value),
+            get=lambda ref:saved.get(ref),
+            delete=lambda ref:saved.pop(ref,None))
+        self.editor.credential_store=store
+        secure=self.Action(kind='secure_input',secure_mode='auto')
+        self.editor.project=Project(name='Confidential sample',actions=[
+            self.Action(kind='type',text='private content'),secure])
+        self.editor.session_secrets={secure.id:'dummy saved input'}
+        self.editor.name.setText('Confidential sample')
+        self.editor.is_dirty=False
+        with TemporaryDirectory() as directory:
+            base=Path(directory)
+            save_path=base/'saved.vas.json'
+            export_path=base/'export.vas.json'
+            self.editor.project_path=save_path
+            with (patch('PySide6.QtWidgets.QMessageBox.critical') as fail,
+                  patch('action_studio.ui.PortablePassphraseDialog',create=True,
+                        side_effect=AssertionError('passphrase requested'))):
+                self.assertTrue(self.editor.save())
+                fail.assert_not_called()
+            encrypted=save_path.read_text(encoding='utf-8')
+            self.assertNotIn('private content',encrypted)
+            self.assertNotIn('dummy saved input',encrypted)
+            self.assertEqual(load_encrypted_project(save_path,store)[1][secure.id],
+                             'dummy saved input')
+            with patch('action_studio.ui.QFileDialog.getSaveFileName',
+                       return_value=(str(export_path),'TakePath projects (*.vas.json)')):
+                self.assertTrue(self.editor.export_encrypted_project())
+            self.assertTrue(export_path.exists())
+            self.assertEqual(load_encrypted_project(export_path,store)[1][secure.id],
+                             'dummy saved input')
+            self.editor.project_path=None
+            self.editor.session_secrets.clear()
+            with patch('action_studio.ui.QFileDialog.getOpenFileName',
+                       return_value=(str(save_path),'TakePath projects (*.vas.json)')):
+                self.editor.open_project()
+            self.assertEqual(self.editor.project.actions[0].text,'private content')
+            self.assertEqual(self.editor.session_secrets[secure.id],'dummy saved input')
+            self.assertEqual(self.editor._snapshot_secure_values()[secure.id],
+                             'dummy saved input')
+
+    def test_encrypted_save_without_vault_fails_closed(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from unittest.mock import patch
+        self.editor.credential_store=None
+        with TemporaryDirectory() as directory:
+            path=Path(directory)/'should-not-write.vas.json'
+            self.editor.project_path=path
+            with patch('PySide6.QtWidgets.QMessageBox.critical') as alert:
+                self.assertFalse(self.editor.save())
+                self.assertTrue(alert.called)
+            self.assertFalse(path.exists())
+
+
 
 if __name__=='__main__':
     unittest.main()
