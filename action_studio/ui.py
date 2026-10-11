@@ -2658,8 +2658,27 @@ class MainWindow(QMainWindow):
                 target.secure_ref=ref
             self.dirty()
         else:
+            # Session-only must not silently revive an older persisted value
+            # the next time this project is loaded. Detach shared references
+            # and remove only the current actions' OS-store aliases.
+            external_refs={other.secure_ref for other in self.project.actions
+                           if other not in targets and valid_reference(other.secure_ref)}
             for target in targets:
-                self.session_secrets[self._secret_key(target)]=secret
+                old_ref=target.secure_ref
+                if self.credential_store:
+                    try:
+                        if valid_reference(target.id):
+                            self.credential_store.delete(target.id)
+                        if (valid_reference(old_ref) and old_ref not in external_refs
+                                and old_ref!=target.id):
+                            self.credential_store.delete(old_ref)
+                    except CredentialError as exc:
+                        QMessageBox.warning(self,'Could not switch to session-only',str(exc))
+                        return
+                target.secure_ref=''
+                self.session_secrets.pop(old_ref,None)
+                self.session_secrets[target.id]=secret
+            self.dirty()
         self.secret_reveal.setChecked(False)
         self.secret_apply_all.setChecked(False)
         self.secret_edit.clear()
