@@ -332,8 +332,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.editor.refresh({action.id})
         menu=self.editor.build_action_context_menu(
             self.editor.table.visualRect(self.editor.table.model().index(0,0)).center())
-        submenu=next(item.menu() for item in menu.actions() if item.text()=='Mouse speed')
-        self.assertFalse(submenu.isEnabled())
+        entries=[item.text() for item in menu.actions()]
+        self.assertNotIn('Mouse speed',entries)
+        self.assertIn('Typing speed',entries)
         self.assertEqual(action.mouse_speed_override,'inherit')
 
 
@@ -355,7 +356,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertFalse(dock.pause.isVisible())
                 self.assertEqual(self.editor.recorder.interactive_bounds,(500,30,196,64))
                 dock.set_compact_mode(True)
-                self.assertEqual(dock.width(),550)
+                self.assertEqual(dock.width(),238)
+                self.assertGreater(dock.control_island.x(),dock.x()+dock.width()-15)
                 dock.set_compact_mode(False)
                 self.assertEqual(dock.width(),846)
                 self.editor.recorder.active=False
