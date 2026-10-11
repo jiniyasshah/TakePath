@@ -45,7 +45,7 @@ class V10Tests(unittest.TestCase):
         self.assertIn('if not actions and self.retake_pending:',record)
 
     def test_retake_is_disabled_during_replay(self):
-        self.assertIn('self.active_retake.setVisible(recording)',UI)
+        self.assertIn('self.active_retake.setVisible(recording and not island_active)',UI)
         self.assertIn('self.retake_button.setVisible(bool(self.owner.project.actions) and not busy)',UI)
         self.assertIn("self.replay.clicked.connect(owner.start_playback)",UI)
 

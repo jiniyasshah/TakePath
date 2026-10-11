@@ -337,5 +337,70 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertEqual(action.mouse_speed_override,'inherit')
 
 
+    def test_windows_interactive_island_and_compact_persistence(self):
+        from unittest.mock import patch
+        dock=self.editor.dock
+        self.assertIsNotNone(dock.control_island)
+        old=dock.compact_active
+        try:
+            with patch.object(dock,'_avoid_stealing_focus'), \
+                 patch('action_studio.ui.window_rect',return_value=[500,30,196,64]):
+                dock.show()
+                self.editor.recorder.active=True
+                dock.sync()
+                self.qt.processEvents()
+                self.assertTrue(dock.control_island.isVisible())
+                self.assertTrue(dock.control_island.pause.isEnabled())
+                self.assertTrue(dock.control_island.stop.isEnabled())
+                self.assertFalse(dock.pause.isVisible())
+                self.assertEqual(self.editor.recorder.interactive_bounds,(500,30,196,64))
+                dock.set_compact_mode(True)
+                self.assertEqual(dock.width(),550)
+                dock.set_compact_mode(False)
+                self.assertEqual(dock.width(),846)
+                self.editor.recorder.active=False
+                dock.sync()
+                self.assertFalse(dock.control_island.isVisible())
+                self.assertIsNone(self.editor.recorder.interactive_bounds)
+        finally:
+            self.editor.recorder.active=False
+            dock.set_compact_mode(old)
+            dock.hide()
+
+    def test_windows_controller_pause_and_stop_mouse_clicks(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        dock=self.editor.dock
+        try:
+            dock.show()
+            self.editor.recorder.active=True
+            events=[]
+            with patch.object(dock,'_avoid_stealing_focus'), \
+                 patch('action_studio.ui.window_rect',return_value=[500,30,196,64]), \
+                 patch.object(self.editor.recorder,'toggle_pause',
+                              side_effect=lambda:events.append('pause')), \
+                 patch.object(self.editor.recorder,'stop',
+                              side_effect=lambda:events.append('stop')):
+                dock.sync()
+                self.qt.processEvents()
+                QTest.mouseClick(dock.control_island.pause,Qt.LeftButton)
+                QTest.mouseClick(dock.control_island.stop,Qt.LeftButton)
+                self.assertEqual(events,['pause','stop'])
+                self.assertTrue(dock.control_island.drag_handle.isEnabled())
+        finally:
+            self.editor.recorder.active=False
+            dock.sync()
+            dock.hide()
+
+    def test_smart_dock_does_not_steal_browser_focus_flag(self):
+        from PySide6.QtCore import Qt
+        dock=self.editor.dock
+        island=dock.control_island
+        self.assertTrue(bool(island.windowFlags() & Qt.WindowDoesNotAcceptFocus))
+        self.assertTrue(island.testAttribute(Qt.WA_ShowWithoutActivating))
+        self.assertTrue(island.isWindow())
+        self.assertIsNone(island.parentWidget())
+        self.assertTrue(dock.isWindow())
+
 if __name__=='__main__':
     unittest.main()

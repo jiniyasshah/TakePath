@@ -672,6 +672,68 @@ class DockDragHandle(QPushButton):
         super().mouseReleaseEvent(event)
 
 
+class DockControlIsland(QWidget):
+    """Separate interactive window above the click-through recording status.
+
+    Its own HWND is intentionally NOT mouse-transparent. The status dock's
+    HWND can forward clicks to Brave while this little controller still gets
+    button and drag events. Windows WS_EX_NOACTIVATE avoids stealing focus.
+    """
+    def __init__(self, dock):
+        flags=Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        if sys.platform == 'win32':
+            flags |= Qt.WindowDoesNotAcceptFocus
+        super().__init__(None, flags)
+        self.dock=dock
+        self.setObjectName('dockControlIsland')
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setFixedSize(196, 64)
+        layout=V(self,(3,3,3,3),0)
+        frame=F('dockBody')
+        layout.addWidget(frame)
+        actions=H(frame,(6,1,6,1),4)
+        self.drag_handle=DockDragHandle(dock)
+        self.drag_handle.setToolTip('Drag here to move the recording dock')
+        actions.addWidget(self.drag_handle)
+        self.pause=icon_button('pause',dock.owner.toggle_pause,'Pause or resume (F7)')
+        self.pause.setAccessibleName('Pause or resume recording or replay')
+        actions.addWidget(self.pause)
+        self.stop=icon_button('stop',dock.owner.stop,'Stop recording or replay (F8)',
+                              'stopOrb','#FFFFFF',20)
+        self.stop.setAccessibleName('Stop recording or replay')
+        actions.addWidget(self.stop)
+        self.compact=icon_button('minus',lambda:dock.set_compact_mode(not dock.compact_active),
+                                  'Toggle compact recording dock')
+        self.compact.setAccessibleName('Toggle compact dock')
+        actions.addWidget(self.compact)
+        self._excluded_from_capture=False
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        if sys.platform != 'win32':
+            return
+        try:
+            hwnd=int(self.winId())
+            user32=ctypes.windll.user32
+            current=user32.GetWindowLongW(hwnd,-20)
+            user32.SetWindowLongW(hwnd,-20,(current | 0x08000000) & ~0x00000020)
+            # HWND_TOPMOST, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE |
+            # SWP_NOOWNERZORDER | SWP_FRAMECHANGED.
+            user32.SetWindowPos(hwnd,-1,0,0,0,0,
+                                0x0010|0x0002|0x0001|0x0200|0x0020)
+            if not self._excluded_from_capture:
+                self._excluded_from_capture=bool(user32.SetWindowDisplayAffinity(hwnd,0x11))
+        except Exception:
+            pass
+
+    def update_controls(self, paused, compact):
+        self.pause.setIcon(vector_icon('play' if paused else 'pause'))
+        self.pause.setToolTip('Resume (F7)' if paused else 'Pause (F7)')
+        self.compact.setIcon(vector_icon('plus' if compact else 'minus'))
+        self.compact.setToolTip('Expand dock' if compact else 'Compact dock')
+
+
 class ControlDock(QWidget):
     """Compact floating record bar. Editing controls stay in the editor."""
     def __init__(self, owner):
@@ -692,6 +754,8 @@ class ControlDock(QWidget):
         self._no_activate = False
         self._pointer_passthrough = False
         self._capture_exclusion_attempted = False
+        self.compact_active = str(owner.settings.value('dock_compact_active','false')).lower() == 'true'
+        self.control_island = None
         root=V(self,(10,7,10,9),0)
         body=F('dockBody')
         root.addWidget(body,1)
@@ -781,7 +845,8 @@ class ControlDock(QWidget):
         active=QWidget()
         active.setObjectName('dockPage')
         row=H(active,(0,0,0,0),9)
-        row.addWidget(DockDragHandle(self))
+        self.active_handle=DockDragHandle(self)
+        row.addWidget(self.active_handle)
         self.mode_status=L('●  REC','recIndicator')
         self.mode_status.setMinimumWidth(84)
         row.addWidget(self.mode_status)
@@ -806,10 +871,17 @@ class ControlDock(QWidget):
         self.stop=icon_button('stop',owner.stop,'Stop (F8)','stopOrb','#FFFFFF',20)
         row.addWidget(self.stop)
         row.addStretch(1)
-        row.addWidget(self._separator())
-        row.addWidget(icon_button('minus',self.minimize_to_tray,'Minimize to notification area'))
-        row.addWidget(icon_button('close',self.close,'Stop and close'))
+        self.active_separator=self._separator()
+        row.addWidget(self.active_separator)
+        self.active_minimize=icon_button('minus',self.minimize_to_tray,'Minimize to notification area')
+        self.active_close=icon_button('close',self.close,'Stop and close')
+        row.addWidget(self.active_minimize)
+        row.addWidget(self.active_close)
         self.stack.addWidget(active)
+        if sys.platform == 'win32':
+            # Independent native HWND: status stays click-through, controls
+            # are genuinely clickable and nonactivating.
+            self.control_island=DockControlIsland(self)
         self.set_target(self.target_mode)
         self._update_countdown()
         self.place(str(owner.settings.value('dock_location','top')), initially=True)
@@ -945,6 +1017,11 @@ class ControlDock(QWidget):
         menu.addAction('Open project…',self.owner.open_project)
         menu.addAction('Save project…',self.owner.save)
         menu.addSeparator()
+        compact=menu.addAction('Compact dock during recording / replay')
+        compact.setCheckable(True)
+        compact.setChecked(self.compact_active)
+        compact.toggled.connect(self.set_compact_mode)
+        menu.addSeparator()
         position=menu.addMenu('Dock position')
         for label,mode in [('Top center','top'),('Top left','top-left'),('Top right','top-right'),('Bottom center','bottom')]:
             position.addAction(label,lambda p=mode:self.place(p))
@@ -970,6 +1047,49 @@ class ControlDock(QWidget):
         self.move(x,y)
         if not initially:
             self.owner.settings.setValue('dock_location',location)
+
+    def set_compact_mode(self, compact):
+        compact=bool(compact)
+        if compact == self.compact_active:
+            return
+        self.compact_active=compact
+        self.owner.settings.setValue('dock_compact_active',compact)
+        self.sync()
+
+    def _sync_control_island(self, active, paused):
+        island=self.control_island
+        if island is None:
+            return
+        if not active or not self.isVisible():
+            island.hide()
+            self.owner.recorder.set_interactive_bounds(None)
+            return
+        island.update_controls(paused, self.compact_active)
+        point=QPoint(self.x()+self.width()-island.width()-7,
+                     self.y()+(self.height()-island.height())//2)
+        if island.pos()!=point:
+            island.move(point)
+        if not island.isVisible():
+            island.show()
+            island.raise_()  # only on transition; never steal target focus
+        # Windows native physical coordinates; pynput runs in screen space.
+        try:
+            self.owner.recorder.set_interactive_bounds(
+                window_rect(int(island.winId())))
+        except Exception:
+            self.owner.recorder.set_interactive_bounds(None)
+
+    def moveEvent(self,event):
+        super().moveEvent(event)
+        if self.control_island is not None and self.control_island.isVisible():
+            self._sync_control_island(True, self.owner.recorder.paused or
+                bool(self.owner.player and self.owner.player.pause_flag.is_set()))
+
+    def hideEvent(self,event):
+        if self.control_island is not None:
+            self.control_island.hide()
+            self.owner.recorder.set_interactive_bounds(None)
+        super().hideEvent(event)
 
     def minimize_to_tray(self):
         if self.owner.tray and self.owner.tray.isVisible():
@@ -1032,9 +1152,20 @@ class ControlDock(QWidget):
         playing=bool(self.owner.player and self.owner.player.isRunning())
         pending=self.owner.timer.isActive() or bool(self.owner.pending_mode)
         busy=recording or playing or pending
+        island_active=bool(self.control_island and (recording or playing))
+        # Compact mode is only used while the separate controller is active.
+        # Leave the full-size dock unchanged for idle and countdown.
+        desired_width=550 if island_active and self.compact_active else 846
+        if self.width()!=desired_width:
+            self.setFixedSize(desired_width,84)
+            self.place(str(self.owner.settings.value('dock_location','top')),initially=True)
         self.stack.setCurrentIndex(1 if busy else 0)
         self.retake_button.setVisible(bool(self.owner.project.actions) and not busy)
-        self.active_retake.setVisible(recording)
+        self.active_retake.setVisible(recording and not island_active)
+        for widget in (self.active_handle,self.pause,self.stop,self.active_separator,
+                       self.active_minimize,self.active_close):
+            widget.setVisible(not island_active)
+        self.step_status.setFixedWidth(130 if island_active and self.compact_active else 230)
         ready = self.owner.replay_ready and not busy
         self.primary_stack.setCurrentIndex(1 if ready else 0)
         self.center.setToolTip('Center before replay' if ready else 'Center before recording')
@@ -1044,7 +1175,7 @@ class ControlDock(QWidget):
         self.edit_dock.setToolTip('Back to action editor' if ready else ('Open editor after replay' if finished else 'Open action editor'))
         self.edit_dock.setFixedWidth(135 if show_editor_label else 38)
         waiting = bool(playing and self.owner.player.awaiting_secure_input)
-        self.secure_hint.setVisible(waiting)
+        self.secure_hint.setVisible(waiting and not (island_active and self.compact_active))
         self.step_status.setVisible(playing)
         if playing:
             index=self.owner.last_playback_step
@@ -1059,7 +1190,7 @@ class ControlDock(QWidget):
                 self.step_status.setToolTip('Waiting for the first action')
         self.pause.setToolTip('Continue after manual input (F7)' if waiting else 'Pause / resume (F7)')
         self._avoid_stealing_focus(busy or ready, pointer_passthrough=recording or playing)
-        self.stop.setToolTip("Use F8 to stop while recording or replaying; mouse clicks pass through the dock" if (recording or playing) else "Stop (F8)")
+        self.stop.setToolTip("Use the floating Stop controller or F8" if island_active else "Stop (F8)")
         self.stop.setIcon(vector_icon('close','#FFFFFF') if pending else vector_icon('stop','#FFFFFF'))
         self.pause.setEnabled(recording or playing)
         if recording:
@@ -1081,6 +1212,9 @@ class ControlDock(QWidget):
             self.clock.setText(str(self.owner.left_count))
         if not (recording or playing):
             self.stop.setToolTip('Cancel countdown' if pending else 'Stop (F8)')
+        paused=bool(self.owner.recorder.paused if recording else
+                    self.owner.player.pause_flag.is_set() if playing else False)
+        self._sync_control_island(island_active, paused)
 
     def closeEvent(self,event):
         if self.owner.busy():
