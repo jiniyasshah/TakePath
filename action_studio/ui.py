@@ -23,11 +23,12 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, ACTION_TYPING_SPEED_MODES, TYPING_SPEED_FACTORS, effective_mouse_speed, effective_typing_speed
+from .core import Action, Project, interpolate_path, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, ACTION_TYPING_SPEED_MODES, TYPING_SPEED_FACTORS, effective_mouse_speed, effective_typing_speed
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
-from .portable_secrets import encrypt_secret_bundle, decrypt_secret_bundle, PortableSecretError
+from .encrypted_projects import (save_encrypted_project, load_encrypted_project,
+                                 ProjectEncryptionError)
 from .targets import open_windows, usable_window, screen_entries, window_menu_label
 from .platform_api import (foreground as platform_foreground, window_pid, is_ours as platform_is_ours,
                            activate_target_window as platform_activate, center_cursor as platform_center,
@@ -1536,12 +1537,12 @@ class SecurePreflightDialog(QDialog):
             checkbox=QCheckBox('Save securely on this Windows PC')
             checkbox.setChecked(bool(allow_save))
             checkbox.setEnabled(allow_save)
-            if not allow_save: checkbox.setToolTip('Windows Credential Manager is unavailable. Session-only input still works.')
+            if not allow_save: checkbox.setToolTip('OS credential storage is unavailable. Input will be encrypted when the project is saved, once a secure key vault is available.')
             col.addWidget(checkbox)
             layout.addWidget(group)
             self.inputs[ref]=edit
             self.remember[ref]=checkbox
-        self.apply_all=QCheckBox('Use the first passphrase for all missing secure inputs')
+        self.apply_all=QCheckBox('Use the same value for every missing secure field')
         self.apply_all.setChecked(False)
         self.apply_all.setEnabled(len(self.inputs)>1)
         self.apply_all.setToolTip('Only enable when every missing field uses exactly the same secret.')
@@ -1581,54 +1582,6 @@ class SecurePreflightDialog(QDialog):
             persist=self.remember[first].isChecked()
             return [(ref,secret,persist) for ref in self.inputs]
         return [(ref,edit.text(),self.remember[ref].isChecked()) for ref,edit in self.inputs.items()]
-
-
-class PortablePassphraseDialog(QDialog):
-    """User-supplied export/unlock passphrase. Never save or remember it."""
-    def __init__(self,parent=None,confirm=False):
-        super().__init__(parent)
-        self.setWindowTitle('Encrypt portable project' if confirm else 'Unlock portable project')
-        self.setMinimumWidth(460)
-        self.setWindowFlag(Qt.WindowContextHelpButtonHint,False)
-        layout=V(self,(22,20,22,18),12)
-        help_text=('A portable copy will include AES-GCM encrypted secure values. '
-                   'Remember this passphrase: it cannot be recovered.'
-                   if confirm else
-                   'This project contains encrypted secure values. '
-                   'Enter its export passphrase to unlock them for replay.')
-        help_label=L(help_text,'muted');help_label.setWordWrap(True)
-        layout.addWidget(help_label)
-        self.value=QLineEdit()
-        self.value.setEchoMode(QLineEdit.Password)
-        self.value.setPlaceholderText('Passphrase (12+ characters)')
-        self.value.setMaxLength(512)
-        row=H(spacing=8);row.addWidget(self.value,1);row.addWidget(password_reveal_button(self.value))
-        layout.addLayout(row)
-        self.confirm=QLineEdit() if confirm else None
-        if self.confirm is not None:
-            self.confirm.setEchoMode(QLineEdit.Password)
-            self.confirm.setPlaceholderText('Confirm passphrase')
-            row=H(spacing=8);row.addWidget(self.confirm,1);row.addWidget(password_reveal_button(self.confirm))
-            layout.addLayout(row)
-        self.error=L('','muted');layout.addWidget(self.error)
-        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._accept_if_valid);buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _accept_if_valid(self):
-        if len(self.value.text()) < 12:
-            self.error.setText('Use at least 12 characters.')
-        elif self.confirm is not None and self.value.text()!=self.confirm.text():
-            self.error.setText('Passphrases do not match.')
-        else:
-            self.accept()
-
-    def passphrase(self):
-        return self.value.text()
-
-    def clear_passphrase(self):
-        self.value.clear()
-        if self.confirm is not None:self.confirm.clear()
 
 
 class ActionContextMenu(QMenu):
@@ -1803,8 +1756,8 @@ class MainWindow(QMainWindow):
         hb.addWidget(self.name)
         hb.addStretch(1)
         hb.addWidget(B('Save',self.save,'outline','Save project · Ctrl+S'))
-        hb.addWidget(B('Export encrypted…',self.export_encrypted_project,'outline',
-                       'Create a portable copy with passphrase-encrypted secure inputs'))
+        hb.addWidget(B('Export copy…',self.export_encrypted_project,'outline',
+                       'Save an automatically encrypted copy for this OS account; no passphrase needed'))
         hb.addWidget(B('Back to recorder',self.show_dock,'quiet'))
         hb.addWidget(B('New capture',self.prepare_new_capture,'outline','Close editor and return to the recorder bar'))
         hb.addWidget(B('▶  Replay',self.prepare_replay,'primary','Switch to replay dock. Press Play there to start.'))
@@ -1898,7 +1851,10 @@ class MainWindow(QMainWindow):
         secret_row.addWidget(self.secret_reveal)
         secure_form.addLayout(secret_row)
         self.secret_remember=QCheckBox('Remember securely on this device')
-        self.secret_remember.setToolTip('Stored in Windows Credential Manager or the supported system keychain; only a reference is saved in a normal project.')
+        self.secret_remember.setToolTip(
+            'Optionally also remembers this value in Windows Credential Manager or '
+            'the supported system keychain. Save/Export always encrypts configured '
+            'values inside the entire project file.')
         self.secret_remember.setChecked(bool(self.credential_store))
         self.secret_remember.setEnabled(bool(self.credential_store))
         secure_form.addWidget(self.secret_remember)
@@ -1915,7 +1871,7 @@ class MainWindow(QMainWindow):
         review=B('Review value',self.review_secure_value,'quiet',
                  'Explicitly load the configured value into the masked field for verification')
         secure_form.addWidget(review)
-        secret_help=L('Values stay hidden unless you click the eye icon. They never go in project JSON.','muted')
+        secret_help=L('Values remain hidden and are encrypted whenever you Save or Export the project.','muted')
         secret_help.setWordWrap(True)
         secure_form.addWidget(secret_help)
         sv.addWidget(self.secure_autofill)
@@ -2617,8 +2573,8 @@ class MainWindow(QMainWindow):
         persisted=self._read_saved_secret(a) is not None
         has_bundle=bool(self.project.encrypted_secrets)
         self.secret_status.setText('● Saved in system credential store' if persisted else
-                                   '● Ready for this session' if session else
-                                   '● Encrypted portable input · unlock when replaying'
+                                   '● Ready · included in encrypted saves' if session else
+                                   '● Legacy encrypted input · reconfigure if needed'
                                    if has_bundle else
                                    '○ Missing · will ask before replay')
 
@@ -2953,11 +2909,9 @@ class MainWindow(QMainWindow):
         if self.busy() or not self._discard_ok():return
         try:
             path=Path(__file__).resolve().parent.parent/'examples'/'tutorial_demo.vas.json'
-            self.session_secrets.clear()
-            self.prepared_secure.clear()
-            self.portable_unlocked.clear()
+            project,values=load_encrypted_project(path,self.credential_store)
             self.take_history.clear()
-            self.project=load_project(path)
+            self._open_secure_snapshot(project,values)
             self.project_path=None;self.is_dirty=False
             self.name.setText(self.project.name)
             self.refresh(set())
@@ -2970,11 +2924,10 @@ class MainWindow(QMainWindow):
         path,_=QFileDialog.getOpenFileName(self,'Open workflow',str(Path.home()),'TakePath projects (*.vas.json);;JSON (*.json)')
         if not path:return
         try:
-            self.session_secrets.clear()
-            self.prepared_secure.clear()
-            self.portable_unlocked.clear()
+            # Do not discard current project until authentication succeeds.
+            project,values=load_encrypted_project(path,self.credential_store)
             self.take_history.clear()
-            self.project=load_project(path)
+            self._open_secure_snapshot(project,values)
             self.project_path=Path(path)
             self.is_dirty=False
             self.name.setText(self.project.name)
@@ -2984,15 +2937,46 @@ class MainWindow(QMainWindow):
             self.notice('Project loaded. Review coordinates and app state before replay.')
         except Exception as e:QMessageBox.critical(self,'Open failed',str(e))
 
+    def _snapshot_secure_values(self):
+        """Only already-configured inputs; never prompt during Save/Export.
+
+        Save the full encrypted workflow even if some optional secure values
+        are unset. Missing values may be supplied when replay actually needs
+        them, not every time the user saves.
+        """
+        values={}
+        for action in self.project.actions:
+            if action.kind!='secure_input' or action.secure_mode!='auto':
+                continue
+            secret=self.session_secrets.get(self._secret_key(action))
+            if secret is None:
+                secret=self.session_secrets.get(action.id)
+            if secret is None:
+                secret=self._read_saved_secret(action)
+            if secret is not None:
+                values[action.id]=secret
+        return values
+
+    def _open_secure_snapshot(self, project, values):
+        """Restore saved values into RAM; ordinary UI never unmasks them."""
+        self.project=project
+        self.session_secrets={}
+        self.prepared_secure.clear()
+        self.portable_unlocked.clear()
+        for action in project.actions:
+            if action.id in values and action.kind=='secure_input':
+                self.session_secrets[self._secret_key(action)]=values[action.id]
+
     def save(self):
         self._rename()
         if self.project_path is None:
             return self.save_as()
         try:
-            save_project(self.project,self.project_path)
+            save_encrypted_project(self.project,self.project_path,self.credential_store,
+                                   self._snapshot_secure_values())
             self.is_dirty=False
             self._metrics()
-            self.notice('Project saved locally.')
+            self.notice('Project encrypted and saved locally.')
             return True
         except Exception as e:
             QMessageBox.critical(self,'Save failed',str(e))
@@ -3004,8 +2988,12 @@ class MainWindow(QMainWindow):
         if not path:return False
         if not path.lower().endswith('.vas.json'):
             path=path[:-5]+'.vas.json' if path.lower().endswith('.json') else path+'.vas.json'
+        previous=self.project_path
         self.project_path=Path(path)
-        return self.save()
+        if self.save():
+            return True
+        self.project_path=previous
+        return False
 
     def minimize_dock_to_taskbar(self):
         """Hide the floating bar, but retain the ordinary taskbar button."""
@@ -3032,38 +3020,27 @@ class MainWindow(QMainWindow):
         self.dock.sync()
 
     def export_encrypted_project(self):
-        """Export an encrypted copy. Ordinary Save keeps raw secrets out."""
+        """Export a second encrypted project without password prompts.
+
+        Both Save and Export use the exact same authenticated OS-protected
+        format. Encrypted copies are accessible to this account/device only.
+        """
         if self.busy():return False
-        auto=[a for a in self.project.actions
-              if a.kind=='secure_input' and a.secure_mode=='auto' and a.enabled]
-        if not auto:
-            QMessageBox.information(self,'No secure steps',
-                'There are no enabled auto-fill secure inputs to encrypt.')
-            return False
-        if not self._prepare_secure_values():return False
-        prompt=PortablePassphraseDialog(self._visible_dialog_parent(),confirm=True)
+        path,_=QFileDialog.getSaveFileName(
+            self._visible_dialog_parent(),'Export encrypted project copy',
+            str(Path.home()/'TakePath export.vas.json'),
+            'TakePath projects (*.vas.json)')
+        if not path:return False
+        if not path.lower().endswith('.vas.json'):
+            path=path[:-5]+'.vas.json' if path.lower().endswith('.json') else path+'.vas.json'
         try:
-            if _foreground_dialog(prompt).exec()!=QDialog.Accepted:return False
-            path,_=QFileDialog.getSaveFileName(self._visible_dialog_parent(),
-                'Export portable encrypted workflow',
-                str(Path.home()/'Encrypted workflow.vas.json'),
-                'TakePath projects (*.vas.json)')
-            if not path:return False
-            if not path.lower().endswith('.vas.json'):
-                path=path[:-5]+'.vas.json' if path.lower().endswith('.json') else path+'.vas.json'
-            snapshot=copy.deepcopy(self.project)
-            secrets={a.id:self.prepared_secure[a.id] for a in auto}
-            snapshot.encrypted_secrets=encrypt_secret_bundle(secrets,prompt.passphrase())
-            save_project(snapshot,Path(path))
-            self.notice('Encrypted portable project exported. Keep its passphrase safe.')
+            save_encrypted_project(self.project,Path(path),self.credential_store,
+                                   self._snapshot_secure_values())
+            self.notice('Encrypted copy exported for this computer and OS account.')
             return True
-        except (PortableSecretError,ValueError,OSError,KeyError) as exc:
-            QMessageBox.warning(self,'Encrypted export failed',str(exc))
+        except (ProjectEncryptionError,ValueError,OSError) as exc:
+            QMessageBox.warning(self,'Export failed',str(exc))
             return False
-        finally:
-            self.prepared_secure.clear()
-            prompt.clear_passphrase()
-            prompt.close()
 
     def show_editor(self):
         if self.busy():return
@@ -3322,7 +3299,8 @@ class MainWindow(QMainWindow):
     def _prepare_secure_values(self):
         """Get every required auto-fill secret before focusing the target app.
 
-        Never store values in Action.text, QSettings, the JSON project, or logs.
+        Never store values in Action.text, QSettings, or logs.
+        Secure values saved to files remain inside the encrypted payload.
         Return False without starting playback if user cancels the prompt.
         """
         available={}
@@ -3341,27 +3319,6 @@ class MainWindow(QMainWindow):
                 available[key]=secret
             else:
                 missing[key]=f'Step {index+1} · Secure input'
-        # Portable secrets are authenticated and decrypted into RAM only.
-        if missing and self.project.encrypted_secrets:
-            if not self.portable_unlocked:
-                unlock=PortablePassphraseDialog(self._visible_dialog_parent())
-                if _foreground_dialog(unlock).exec()!=QDialog.Accepted:
-                    unlock.clear_passphrase()
-                    return False
-                try:
-                    self.portable_unlocked=decrypt_secret_bundle(
-                        self.project.encrypted_secrets,unlock.passphrase())
-                except PortableSecretError as exc:
-                    _warn_in_front(self._visible_dialog_parent(),
-                                   'Cannot unlock portable credentials',str(exc))
-                    return False
-                finally:
-                    unlock.clear_passphrase()
-                    unlock.close()
-            for a_id,key in key_by_action.items():
-                if key in missing and a_id in self.portable_unlocked:
-                    available[key]=self.portable_unlocked[a_id]
-                    missing.pop(key,None)
         if missing:
             dlg=SecurePreflightDialog(list(missing.items()),self._visible_dialog_parent(),
                                       allow_save=bool(self.credential_store))
