@@ -34,8 +34,12 @@ class FinalPolishV9Tests(unittest.TestCase):
         self.assertIn('self.hasFocus()',UI)
 
     def test_darker_surfaces_and_consistent_labels(self):
-        for literal in ('QWidget { background: #0B0D12;',
-                        'QFrame#dockBody { background: #12141C;',
+        # Only actual surfaces are painted; a global QWidget fill used to
+        # draw dark rectangles behind inspector labels and force clip forms.
+        self.assertNotIn('QWidget { background: #0B0D12;',UI)
+        self.assertNotIn('QWidget { background: #0F1013;',UI)
+        self.assertIn('QMainWindow, QDialog, QWidget#editorRoot { background: #0F1013;',UI)
+        for literal in ('QFrame#dockBody { background: #12141C;',
                         'QFrame#topBar { background: #10131A;',
                         'QFrame#replayToolbar { background: #151A24;',
                         'QLabel { background: transparent; }'):
