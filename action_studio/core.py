@@ -224,6 +224,26 @@ def remove_actions(actions: list[Action], selected_ids: set[str]) -> list[Action
     return [action for action in actions if action.id not in selected_ids]
 
 
+def reorder_actions(actions: list[Action], source_rows: list[int], before_row: int) -> list[Action]:
+    """Move selected actions as a stable group to an insertion boundary.
+
+    `before_row` is the boundary in the ORIGINAL action list (0..len).
+    It is adjusted after removing the selected rows, so moving downward
+    and moving a discontiguous selection both preserve action identity,
+    relative ordering, timing and all project metadata.
+    """
+    total = len(actions)
+    rows = sorted(set(source_rows))
+    if (not rows or any(not isinstance(row, int) or row < 0 or row >= total for row in rows)
+            or not isinstance(before_row, int) or before_row < 0 or before_row > total):
+        raise ValueError("Invalid action drag selection or drop position")
+    picked = set(rows)
+    moved = [actions[row] for row in rows]
+    remaining = [action for index, action in enumerate(actions) if index not in picked]
+    insertion = before_row - sum(row < before_row for row in rows)
+    return remaining[:insertion] + moved + remaining[insertion:]
+
+
 def save_project(project: Project, dest: str | Path):
     path = Path(dest)
     # Atomic save so power loss does not truncate an existing project.
