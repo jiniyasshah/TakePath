@@ -74,7 +74,7 @@ class FixedWaitTests(unittest.TestCase):
         self.assertIn("def clear_action_selection(self):", src)
         self.assertIn("def eventFilter(self, obj, event):", src)
         self.assertIn("self.inspector_panel, self.add_action_button", src)
-        self.assertIn("self._inside_widget(obj, viewport)", src)
+        self.assertIn("self._click_within(obj, self.table, event)", src)
         self.assertIn("self.owner.clear_action_selection()", src)
 
 
