@@ -17,6 +17,8 @@ TEXT_MODES = {"human", "instant", "original", "smooth"}
 GLOBAL_TYPING_MODES = {"original", "smooth", "instant"}
 MOUSE_SPEED_MODES = {"normal", "fast", "slow", "instant"}
 ACTION_MOUSE_SPEED_MODES = MOUSE_SPEED_MODES | {"inherit"}
+ACTION_TYPING_SPEED_MODES = {"inherit","original","normal","fast","slow","instant"}
+TYPING_SPEED_FACTORS = {"normal":1.0,"fast":0.45,"slow":1.8}
 MOUSE_SPEED_FACTORS = {"normal": 1.0, "fast": 0.3, "slow": 1.8, "instant": 0.0}
 SECURE_MODES = {"auto", "manual", "skip"}
 MAX_ACTIONS = 12000
@@ -56,6 +58,7 @@ class Action:
     path_mode: str = "smooth"
     path_duration: float = 0.32
     mouse_speed_override: str = "inherit"  # Pointer actions only; otherwise use project-wide speed.
+    typing_speed_override: str = "inherit" # Type actions only; otherwise use global typing style.
     raw_path: list[list[float]] = field(default_factory=list)
     typing_mode: str = "human"
     char_delay: float = 0.055
@@ -89,6 +92,11 @@ class Action:
             if isinstance(defaults.mouse_speed_override, str)
             and defaults.mouse_speed_override in ACTION_MOUSE_SPEED_MODES else "inherit")
         defaults.char_delay = finite_range(defaults.char_delay, 0, 2)
+        defaults.typing_speed_override = (
+            defaults.typing_speed_override
+            if isinstance(defaults.typing_speed_override, str)
+            and defaults.typing_speed_override in ACTION_TYPING_SPEED_MODES
+            else "inherit")
         defaults.enabled = bool(defaults.enabled)
         defaults.id = str(defaults.id)[:80]
         defaults.path_mode = defaults.path_mode if defaults.path_mode in MODES else "smooth"
@@ -269,6 +277,17 @@ def effective_mouse_speed(action: Action, project_speed: str) -> str:
         return default
     mode = action.mouse_speed_override
     return mode if mode in MOUSE_SPEED_MODES else default
+
+
+def effective_typing_speed(action: Action, global_mode: str) -> str:
+    """Use the per-Type policy, falling back to the existing global style."""
+    fallback = global_mode if global_mode in GLOBAL_TYPING_MODES else "smooth"
+    if action.kind != "type":
+        return fallback
+    mode = action.typing_speed_override
+    if mode == "inherit" or mode not in ACTION_TYPING_SPEED_MODES:
+        return fallback
+    return "normal" if mode == "normal" else mode
 
 
 def remove_actions(actions: list[Action], selected_ids: set[str]) -> list[Action]:
