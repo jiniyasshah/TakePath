@@ -1908,11 +1908,11 @@ class MainWindow(QMainWindow):
         self.refresh({a.id for a in targets})
         self.notice(f'{"Enabled" if enabled else "Disabled"} {len(changed)} action(s).')
 
-    def show_action_context_menu(self, pos):
-        """Right click one row or keep an existing multi-selection intact."""
-        if self.busy():return
+    def build_action_context_menu(self, pos):
+        """Build a row menu without opening the native popup (testable)."""
+        if self.busy():return None
         hit=self.table.indexAt(pos)
-        if not hit.isValid():return
+        if not hit.isValid():return None
         row=hit.row()
         selected=self._rows()
         if row not in selected:
@@ -1960,7 +1960,15 @@ class MainWindow(QMainWindow):
         delete=menu.addAction('Delete selected')
         duplicate.triggered.connect(self.duplicate)
         delete.triggered.connect(self.delete_selected)
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        return menu
+
+    def show_action_context_menu(self, pos):
+        menu=self.build_action_context_menu(pos)
+        if menu is not None:
+            try:
+                menu.exec(self.table.viewport().mapToGlobal(pos))
+            finally:
+                menu.deleteLater()
 
     def refresh(self, ids=None):
         if ids is None:
