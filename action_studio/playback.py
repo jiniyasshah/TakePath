@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from PySide6.QtCore import QThread, Signal
-from .core import Action, interpolate_path, anchor_original_path, MOUSE_SPEED_FACTORS, effective_mouse_speed
+from .core import Action, interpolate_path, anchor_original_path, MOUSE_SPEED_FACTORS, effective_mouse_speed, effective_typing_speed, TYPING_SPEED_FACTORS
 from .recorder import foreground, center_cursor
 from .platform_api import window_pid, supported, focus_status, title_of, named_control_available, window_rect
 from .window_geometry import remap_action, valid_rect
@@ -411,12 +411,15 @@ class Player(QThread):
                     pg.hscroll(1 if a.dx > 0 else -1)
                 self._wait(.025 / self.speed)
         elif a.kind == "type":
-            if self.typing_mode == 'instant':
+            mode = effective_typing_speed(a,self.typing_mode)
+            if mode == 'instant':
                 self._unicode_type(a.text,0)
-            elif self.typing_mode == 'original':
+            elif mode == 'original':
                 self._recorded_type(a.text,a.char_timings,a.char_delay)
             else:
-                self._unicode_type(a.text,a.char_delay)
+                # "normal" is the steady/smooth rate; fast and slow scale
+                # only this Type action, not the global typing mode.
+                self._unicode_type(a.text,a.char_delay * TYPING_SPEED_FACTORS.get(mode,1.0))
         elif a.kind == "key":
             keys = a.key.lower().split('+')
             allowed = set(pg.KEYBOARD_KEYS)
