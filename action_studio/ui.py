@@ -120,6 +120,11 @@ QFrame#dockBodyJoinedRight QPushButton#dockIcon:hover { background: #252D3A; }
 QFrame#dockBodyJoinedRight QPushButton#stopOrb {
   min-width: 42px; max-width: 42px; min-height: 42px; max-height: 42px;
   border-radius: 21px; padding: 0px; }
+QPushButton#dockGripIcon {
+  min-width: 34px; max-width: 34px; min-height: 42px; max-height: 42px;
+  background: transparent; border: 1px solid transparent; border-radius: 9px; padding: 0px;
+}
+QPushButton#dockGripIcon:hover { background: #252D3A; }
 QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
   background: #1B202B; border: 1px solid #313A4A; border-radius: 9px;
   padding: 7px 10px; selection-background-color: #536EB1; }
@@ -704,16 +709,13 @@ class DockControlIsland(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         # Keep the independent clickable HWND; eliminate its outer gap.
-        self.setFixedSize(146, 64)
+        self.setFixedSize(116, 64)
         layout=V(self,(0,0,0,0),0)
         frame=F('dockBodyJoinedRight')
         self.frame=frame
         layout.addWidget(frame)
         actions=H(frame,(5,1,5,1),2)
-        self.drag_handle=DockDragHandle(dock)
-        self.drag_handle.setFixedSize(28,34)
-        self.drag_handle.setToolTip('Drag here to move the recording dock')
-        actions.addWidget(self.drag_handle)
+        # The drag control lives at the far left of the entire active dock.
         self.pause=icon_button('pause',dock.owner.toggle_pause,'Pause or resume (F7)')
         self.pause.setAccessibleName('Pause or resume recording or replay')
         self.pause.setFixedSize(28,34)
@@ -755,6 +757,47 @@ class DockControlIsland(QWidget):
         self.compact.setToolTip('Expand dock' if compact else 'Compact dock')
 
 
+class DockGripOverlay(QWidget):
+    """Clickable drag grip above the LEFT edge of the passive status HWND.
+
+    It has its own nonactivating Win32 surface, so the rest of the status
+    continues forwarding clicks to the target application during recording.
+    """
+    def __init__(self, dock):
+        flags=Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        if sys.platform=='win32':
+            flags |= Qt.WindowDoesNotAcceptFocus
+        super().__init__(None, flags)
+        self.setObjectName('dockGripOverlay')
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setFixedSize(34,42)
+        row=H(self,(0,0,0,0),0)
+        self.drag_handle=DockDragHandle(dock)
+        self.drag_handle.setObjectName('dockGripIcon')
+        self.drag_handle.setFixedSize(34,42)
+        self.drag_handle.setToolTip('Drag to move the recording dock')
+        self.drag_handle.setAccessibleName('Drag recording dock')
+        row.addWidget(self.drag_handle)
+        self._excluded_from_capture=False
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        if sys.platform != 'win32':
+            return
+        try:
+            hwnd=int(self.winId())
+            user32=ctypes.windll.user32
+            current=user32.GetWindowLongW(hwnd,-20)
+            user32.SetWindowLongW(hwnd,-20,(current | 0x08000000) & ~0x00000020)
+            user32.SetWindowPos(hwnd,-1,0,0,0,0,
+                                0x0010|0x0002|0x0001|0x0200|0x0020)
+            if not self._excluded_from_capture:
+                self._excluded_from_capture=bool(user32.SetWindowDisplayAffinity(hwnd,0x11))
+        except Exception:
+            pass
+
+
 class ControlDock(QWidget):
     """Compact floating record bar. Editing controls stay in the editor."""
     def __init__(self, owner):
@@ -777,6 +820,7 @@ class ControlDock(QWidget):
         self._capture_exclusion_attempted = False
         self.compact_active = str(owner.settings.value('dock_short_while_active','true')).lower() == 'true'
         self.control_island = None
+        self.grip_overlay = None
         root=V(self,(10,7,10,9),0)
         self.root_layout=root
         body=F('dockBody')
@@ -871,6 +915,12 @@ class ControlDock(QWidget):
         row=H(active,(0,0,0,0),4)
         self.active_handle=DockDragHandle(self)
         row.addWidget(self.active_handle)
+        # Fixed left starting slot, even when the active dock is compact.
+        self.grip_placeholder=QWidget()
+        self.grip_placeholder.setFixedSize(34,42)
+        self.grip_placeholder.setStyleSheet('background: transparent;')
+        self.grip_placeholder.hide()
+        row.addWidget(self.grip_placeholder)
         self.mode_status=L('●  REC','recIndicator')
         self.mode_status.setMinimumWidth(80)
         row.addWidget(self.mode_status)
@@ -906,6 +956,7 @@ class ControlDock(QWidget):
             # Independent native HWND: status stays click-through, controls
             # are genuinely clickable and nonactivating.
             self.control_island=DockControlIsland(self)
+            self.grip_overlay=DockGripOverlay(self)
         self.set_target(self.target_mode)
         self._update_countdown()
         self.place(str(owner.settings.value('dock_location','top')), initially=True)
@@ -1090,24 +1141,37 @@ class ControlDock(QWidget):
 
     def _sync_control_island(self, active, paused):
         island=self.control_island
+        grip=self.grip_overlay
         if island is None:
             return
         if not active or not self.isVisible():
             island.hide()
+            if grip is not None:
+                grip.hide()
             self.owner.recorder.set_interactive_bounds(None)
             return
         island.update_controls(paused, self.compact_active)
-        # One visual capsule, but separate click-through and clickable HWNDs.
+        # The controller stays flush right; the independent drag grip stays
+        # at the LEFT edge in both compact and expanded active modes.
         point=QPoint(self.x()+self.width(), self.y())
         if island.pos()!=point:
             island.move(point)
         if not island.isVisible():
             island.show()
             island.raise_()  # only on transition; never steal target focus
-        # Windows native physical coordinates; pynput runs in screen space.
+        if grip is not None:
+            grip_point=QPoint(self.x()+8,self.y()+(self.height()-grip.height())//2)
+            if grip.pos()!=grip_point:
+                grip.move(grip_point)
+            if not grip.isVisible():
+                grip.show()
+                grip.raise_()
+        # Use physical native hit boxes, including high-DPI Windows monitors.
+        # Neither window should cause the rest of the dock to block clicks.
         try:
-            self.owner.recorder.set_interactive_bounds(
-                window_rect(int(island.winId())))
+            control_bounds=window_rect(int(island.winId()))
+            grip_bounds=window_rect(int(grip.winId())) if grip is not None else None
+            self.owner.recorder.set_interactive_bounds(control_bounds, grip_bounds)
         except Exception:
             self.owner.recorder.set_interactive_bounds(None)
 
@@ -1120,6 +1184,8 @@ class ControlDock(QWidget):
     def hideEvent(self,event):
         if self.control_island is not None:
             self.control_island.hide()
+            if self.grip_overlay is not None:
+                self.grip_overlay.hide()
             self.owner.recorder.set_interactive_bounds(None)
         super().hideEvent(event)
 
@@ -1188,7 +1254,7 @@ class ControlDock(QWidget):
         # The status HWND passes mouse clicks through; the adjoining control
         # HWND handles Pause/Stop and dragging. Both PAINT as one short pill.
         # Idle and countdown retain the original full dock and its shadow.
-        desired_width=(250 if playing else 174) if island_active and self.compact_active else 846
+        desired_width=(290 if playing else 214) if island_active and self.compact_active else 846
         desired_height=64 if island_active else 84
         self.root_layout.setContentsMargins(
             *((0,0,0,0) if island_active else (10,7,10,9)))
@@ -1210,6 +1276,7 @@ class ControlDock(QWidget):
         for widget in (self.active_handle,self.pause,self.stop,self.active_separator,
                        self.active_minimize,self.active_close):
             widget.setVisible(not island_active)
+        self.grip_placeholder.setVisible(island_active)
         self.step_status.setFixedWidth(148 if island_active and self.compact_active else 230)
         self.clock.setVisible(not (island_active and playing and self.compact_active))
         ready = self.owner.replay_ready and not busy
