@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo, QPropertyAnimation, QEasingCurve, QAbstractAnimation
+from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo, QVariantAnimation, QEasingCurve, QAbstractAnimation
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QImage, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
@@ -874,7 +874,8 @@ class ControlDock(QWidget):
         self.compact_active = str(owner.settings.value('dock_short_while_active','true')).lower() == 'true'
         self.control_island = None
         self.grip_overlay = None
-        self._dock_geometry_animation=QPropertyAnimation(self,b'geometry',self)
+        self._dock_geometry_animation=QVariantAnimation(self)
+        self._dock_geometry_animation.valueChanged.connect(self._apply_dock_geometry)
         self._dock_geometry_animation.setDuration(245)
         self._dock_geometry_animation.setEasingCurve(QEasingCurve.InOutCubic)
         self._target_dimensions=(846,84)
@@ -1249,6 +1250,15 @@ class ControlDock(QWidget):
             self._sync_control_island(True, self.owner.recorder.paused or
                 bool(self.owner.player and self.owner.player.pause_flag.is_set()))
 
+    def _apply_dock_geometry(self,rect):
+        """Explicit fixed geometry overrides minimum layout width from idle page.
+
+        Animating QWidget.geometry directly is clamped by the idle page's
+        minimumSizeHint and leaves a half-sized 630px dock on Windows.
+        """
+        self.setFixedSize(rect.size())
+        self.move(rect.topLeft())
+
     def _transition_dock_geometry(self, width, height, active):
         """Animate about the existing combined dock center, never the screen center."""
         previous_total=self.width()+(
@@ -1260,10 +1270,8 @@ class ControlDock(QWidget):
         goal=QRect(round(center_x-new_total/2),round(center_y-height/2),width,height)
         self._target_dimensions=(width,height)
         self._dock_geometry_animation.stop()
-        self.setMinimumSize(0,0)
-        self.setMaximumSize(16777215,16777215)
         if not self.isVisible():
-            self.setGeometry(goal)
+            self._apply_dock_geometry(goal)
             return
         self._dock_geometry_animation.setStartValue(self.geometry())
         self._dock_geometry_animation.setEndValue(goal)
