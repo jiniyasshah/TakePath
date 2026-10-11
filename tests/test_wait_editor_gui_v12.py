@@ -362,6 +362,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 dock.set_compact_mode(True)
                 from PySide6.QtTest import QTest
                 QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertEqual(dock.width(),214)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.width(),116)
@@ -376,6 +378,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertTrue(dock.grip_placeholder.isVisible())
                 dock.set_compact_mode(False)
                 QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertEqual(dock.width(),846)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
@@ -383,6 +387,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.editor.recorder.active=False
                 dock.sync()
                 QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertFalse(dock.control_island.isVisible())
                 self.assertFalse(dock.grip_overlay.isVisible())
                 self.assertIsNone(self.editor.recorder.interactive_bounds)
@@ -520,6 +526,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 dock.place('top',initially=True)
                 from PySide6.QtTest import QTest
                 QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.qt.processEvents()
                 area=QGuiApplication.primaryScreen().availableGeometry()
                 full_width=dock.width()+dock.control_island.width()
@@ -554,6 +562,8 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 dock.sync()
                 from PySide6.QtTest import QTest
                 QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.qt.processEvents()
                 self.assertEqual(dock.width(),290)
                 self.assertEqual(dock.height(),64)
@@ -668,10 +678,14 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 dock.set_compact_mode(True)
                 dock.sync()
                 QTest.qWait(300)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 compact_center=dock.x()+(dock.width()+dock.control_island.width())/2
                 compact_y=dock.y()+dock.height()/2
                 dock.set_compact_mode(False)
                 QTest.qWait(300)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertAlmostEqual(dock.x()+(dock.width()+dock.control_island.width())/2,
                                        compact_center,delta=2)
                 self.assertAlmostEqual(dock.y()+dock.height()/2,compact_y,delta=2)
