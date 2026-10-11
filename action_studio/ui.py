@@ -1641,6 +1641,17 @@ class MainWindow(QMainWindow):
     def _inside_widget(widget, ancestor):
         return widget is ancestor or ancestor.isAncestorOf(widget)
 
+    def _click_within(self, widget, area, event):
+        # Qt can deliver the same mouse press to multiple widgets while
+        # propagating it up the parent hierarchy. Use the actual cursor
+        # location too, not only the event receiver's widget ancestry.
+        if self._inside_widget(widget, area):
+            return True
+        if area.isVisible():
+            local = area.mapFromGlobal(event.globalPosition().toPoint())
+            return area.rect().contains(local)
+        return False
+
     def eventFilter(self, obj, event):
         # Ignore the dock, popups, dialogs and windows other than the editor.
         # Do not steal selection from inspector fields or timeline commands
@@ -1649,18 +1660,17 @@ class MainWindow(QMainWindow):
                 isinstance(obj, QWidget) and self.isVisible() and
                 hasattr(self, 'table') and self._rows() and
                 self._inside_widget(obj, self)):
-            if self._inside_widget(obj, self.table):
+            if self._click_within(obj, self.table, event):
                 viewport=self.table.viewport()
-                if self._inside_widget(obj, viewport):
-                    point=viewport.mapFromGlobal(obj.mapToGlobal(event.position().toPoint()))
-                    if not self.table.indexAt(point).isValid():
-                        self.clear_action_selection()
+                point=viewport.mapFromGlobal(event.globalPosition().toPoint())
+                if viewport.rect().contains(point) and not self.table.indexAt(point).isValid():
+                    self.clear_action_selection()
                 return super().eventFilter(obj,event)
             protected=[self.inspector_panel, self.add_action_button,
                        self.before_action_button, self.rail_add_button,
                        self.rail_delete_button, self.canvas]
             protected.extend(self.action_operation_buttons)
-            if not any(self._inside_widget(obj,w) for w in protected):
+            if not any(self._click_within(obj,w,event) for w in protected):
                 self.clear_action_selection()
         return super().eventFilter(obj,event)
 
