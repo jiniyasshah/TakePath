@@ -1370,6 +1370,18 @@ class SecurePreflightDialog(QDialog):
         return [(ref,edit.text(),self.remember[ref].isChecked()) for ref,edit in self.inputs.items()]
 
 
+class ActionContextMenu(QMenu):
+    """Dismiss lingering submenus immediately on unrelated root-row hover."""
+    def mouseMoveEvent(self,event):
+        hovered=self.actionAt(event.position().toPoint())
+        if hovered is not None:
+            for root in self.actions():
+                submenu=root.menu()
+                if submenu is not None and root is not hovered and submenu.isVisible():
+                    submenu.hide()
+        super().mouseMoveEvent(event)
+
+
 class ActionTable(QTableWidget):
     """Drag timeline rows without letting Qt rearrange individual cells.
 
@@ -2126,7 +2138,7 @@ class MainWindow(QMainWindow):
         typed=[a for a in picked if a.kind=='type']
         timed=[a for a in picked if a.kind=='wait' and a.wait_mode=='duration']
 
-        menu=QMenu(self.table)
+        menu=ActionContextMenu(self.table)
         title=menu.addAction(f'{len(selected)} selected action(s)')
         title.setEnabled(False)
         menu.addSeparator()
