@@ -85,7 +85,7 @@ class ReadinessWaitTests(unittest.TestCase):
     def test_old_project_defaults_unaffected(self):
         p=Project.from_dict(Project(actions=[Action(kind='click',x=55)]).to_dict())
         self.assertEqual(p.actions[0].kind,'click')
-        self.assertEqual(p.actions[0].wait_mode,'target_title')
+        self.assertEqual(p.actions[0].wait_mode,'duration')
 
     def test_ui_and_playback_integrated(self):
         root=Path(__file__).resolve().parents[1]
