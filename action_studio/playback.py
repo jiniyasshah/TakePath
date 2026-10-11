@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from PySide6.QtCore import QThread, Signal
-from .core import Action, interpolate_path, anchor_original_path
+from .core import Action, interpolate_path, anchor_original_path, MOUSE_SPEED_FACTORS
 from .recorder import foreground, center_cursor
 from .platform_api import window_pid, supported, focus_status, title_of, named_control_available, window_rect
 from .window_geometry import remap_action, valid_rect
@@ -86,12 +86,14 @@ class Player(QThread):
                  cursor_mode: str = "smooth", center_at_start: bool = False,
                  parent=None, target_mode: str = "window", secure_values: dict[str, str] | None = None,
                  typing_mode: str = "smooth", screen_bounds: list[int] | None = None,
-                 recorded_window_bounds: list[int] | None = None, adaptive_wait: bool = False):
+                 recorded_window_bounds: list[int] | None = None, adaptive_wait: bool = False,
+                 mouse_speed_mode: str = "normal"):
         super().__init__(parent)
         self.actions = actions
         self.target_hwnd = target_hwnd
         self.target_mode = "screen" if target_mode == "screen" else "window"
         self.speed = max(0.25, min(4, speed))
+        self.mouse_speed_mode = mouse_speed_mode if mouse_speed_mode in MOUSE_SPEED_FACTORS else "normal"
         self.cursor_mode = cursor_mode if cursor_mode in ("smooth", "original", "straight", "gentle") else "smooth"
         self.typing_mode = typing_mode if typing_mode in ("original", "smooth", "instant") else "smooth"
         self.center_at_start = center_at_start
@@ -223,8 +225,17 @@ class Player(QThread):
             prev = stamp
         self._move(*dest)
 
-    def _cursor(self, a: Action, x: int, y: int):
-        duration = a.path_duration
+    def _mouse_duration(self, duration: float, *, dragging: bool = False) -> float:
+        # Recorded per-action mouse travel time is independent of its delay.
+        # Fast moves need fewer frames, and Instant clicks can jump directly.
+        seconds = max(0.0, float(duration)) * MOUSE_SPEED_FACTORS[self.mouse_speed_mode]
+        return max(0.06, seconds) if dragging else seconds
+
+    def _cursor(self, a: Action, x: int, y: int, *, dragging: bool = False):
+        duration = self._mouse_duration(a.path_duration, dragging=dragging)
+        if duration == 0:
+            self._move(x, y)
+            return
         if self.cursor_mode == "original" and a.raw_path:
             self._original_move(a.raw_path, (x, y), duration)
         elif self.cursor_mode == "straight":
@@ -375,18 +386,19 @@ class Player(QThread):
             else:
                 pg.click(button=a.button)
         elif a.kind == "drag":
-            self._smooth_move(a.x, a.y, 0.18)
+            self._smooth_move(a.x, a.y, self._mouse_duration(0.18))
             self._guard()
             press_mouse(a.button)
             try:
                 if self.cursor_mode == 'original' and len(a.raw_path) > 1:
-                    self._original_move(a.raw_path, (a.end_x, a.end_y), a.path_duration)
+                    self._original_move(a.raw_path, (a.end_x, a.end_y),
+                                        self._mouse_duration(a.path_duration, dragging=True))
                 else:
-                    self._cursor(a,a.end_x,a.end_y)
+                    self._cursor(a,a.end_x,a.end_y,dragging=True)
             finally:
                 release_mouse(a.button)
         elif a.kind == "scroll":
-            self._smooth_move(a.x, a.y, 0.15)
+            self._smooth_move(a.x, a.y, self._mouse_duration(0.15))
             steps = max(abs(a.dy), abs(a.dx), 1)
             for i in range(steps):
                 self._guard()
