@@ -33,6 +33,151 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release
           Compress-Archive -Path dist/TakePath -DestinationPath release/TakePath-windows-x64-portable.zip
+      - name: Ensure Inno Setup 6 compiler
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler was not found at $iscc"
+          }
+      - name: Build Windows Setup installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          $version = python -c "from action_studio import __version__; print(__version__)"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read TakePath version' }
+          if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?
+      - name: Windows standalone exe
+        shell: pwsh
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name TakePath
+          --icon assets/takepath.ico --distpath standalone
+          --add-data "assets;assets" --add-data "examples;examples"
+          --collect-all uiautomation main.py
+      - name: Rename standalone executable
+        shell: pwsh
+        run: Move-Item standalone/TakePath.exe release/TakePath-windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: release/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-15
+          - arch: x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dependencies
+        run: python -m pip install -r requirements.txt 'pyinstaller>=6,<7'
+      - name: Tests
+        run: python -m unittest discover -s tests -q
+      - name: Build app
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name TakePath \
+            --icon assets/takepath.icns --osx-bundle-identifier org.takepath.app \
+            --add-data 'assets:assets' --add-data 'examples:examples' main.py
+      - name: Bundle DMG and ZIP
+        run: |
+          mkdir -p release
+          hdiutil create -volname TakePath -srcfolder dist/TakePath.app -ov -format UDZO "release/TakePath-macos-${{ matrix.arch }}.dmg"
+          ditto -c -k --sequesterRsrc --keepParent dist/TakePath.app "release/TakePath-macos-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-assets
+          path: release/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64 (X11)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux runtime packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1 libdbus-1-3
+      - name: Dependencies
+        run: python -m pip install -r requirements.txt 'pyinstaller>=6,<7'
+      - name: Tests
+        run: python -m unittest discover -s tests -q
+      - name: Build portable bundle
+        run: bash scripts/build_linux.sh
+      - name: Bundle tarball
+        run: |
+          mkdir -p release
+          tar -C dist -czf release/TakePath-linux-x64.tar.gz TakePath
+      - name: Package AppImage
+        run: |
+          mkdir -p AppDir/usr/bin/TakePath
+          cp -a dist/TakePath/. AppDir/usr/bin/TakePath/
+          cp assets/takepath-icon.png AppDir/takepath.png
+          cp scripts/takepath.desktop AppDir/takepath.desktop
+          cp scripts/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          curl -fL --retry 3 https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -o appimagetool.AppImage
+          chmod +x appimagetool.AppImage
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool.AppImage AppDir release/TakePath-linux-x64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-assets
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-assets"
+          path: release
+          merge-multiple: true
+      - name: SHA256 manifest
+        run: |
+          cd release
+          sha256sum TakePath-* > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body_path: ${{ startsWith(github.ref_name, 'v1.2.') && 'CHANGES_V12.md' || '' }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            release/TakePath-*
+            release/SHA256SUMS.txt
+) {
+            throw "Unsupported version string for Windows installer: $version"
+          }
+          $numericVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+          & $iscc "/DMyAppVersion=$version" "/DMyAppNumericVersion=$numericVersion" "installer\takepath.iss"
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installer compilation failed' }
+          if (-not (Test-Path 'release\TakePath-windows-x64-setup.exe')) {
+            throw 'Windows Setup installer was not generated'
+          }
       - name: Windows standalone exe
         shell: pwsh
         run: >-
