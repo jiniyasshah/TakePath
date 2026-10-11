@@ -33,24 +33,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release
           Compress-Archive -Path dist/TakePath -DestinationPath release/TakePath-windows-x64-portable.zip
-      - name: Ensure Inno Setup 6 compiler
-        shell: pwsh
-        run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path $iscc)) {
-            choco install innosetup --yes --no-progress
-            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
-          }
-          if (-not (Test-Path $iscc)) {
-            throw "Inno Setup compiler was not found at $iscc"
-          }
       - name: Build Windows Setup installer
         shell: pwsh
-        run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          $version = python -c "from action_studio import __version__; print(__version__)"
-          if ($LASTEXITCODE -ne 0) { throw 'Could not read TakePath version' }
-          if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?
+        run: ./scripts/build_windows_installer.ps1
       - name: Windows standalone exe
         shell: pwsh
         run: >-
