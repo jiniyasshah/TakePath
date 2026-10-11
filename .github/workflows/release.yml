@@ -33,6 +33,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release
           Compress-Archive -Path dist/TakePath -DestinationPath release/TakePath-windows-x64-portable.zip
+      - name: Build Windows Setup installer
+        shell: pwsh
+        run: ./scripts/build_windows_installer.ps1
       - name: Windows standalone exe
         shell: pwsh
         run: >-

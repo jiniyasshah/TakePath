@@ -1,0 +1,55 @@
+name: Windows installer smoke build
+
+on:
+  push:
+    paths:
+      - "installer/**"
+      - "scripts/build_windows_installer.ps1"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/windows-installer.yml"
+      - "action_studio/__init__.py"
+      - "tests/test_windows_installer_v12.py"
+  pull_request:
+    paths:
+      - "installer/**"
+      - "scripts/build_windows_installer.ps1"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/windows-installer.yml"
+      - "action_studio/__init__.py"
+      - "tests/test_windows_installer_v12.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: Compile Windows Setup EXE
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - name: Install build dependencies
+        run: python -m pip install -r requirements.txt "pyinstaller>=6,<7"
+      - name: Run tests
+        run: python -m unittest discover -s tests -q
+      - name: Build TakePath onedir bundle
+        shell: pwsh
+        run: >-
+          python -m PyInstaller --noconfirm --clean --windowed --name TakePath
+          --icon assets/takepath.ico --add-data "assets;assets"
+          --add-data "examples;examples" --collect-all uiautomation main.py
+      - name: Build actual Windows installer
+        shell: pwsh
+        run: ./scripts/build_windows_installer.ps1
+      - name: Upload installer for Windows smoke testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup-smoke
+          path: release/TakePath-windows-x64-setup.exe
+          if-no-files-found: error

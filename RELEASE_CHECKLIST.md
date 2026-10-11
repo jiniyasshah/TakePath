@@ -1,8 +1,13 @@
-# TakePath 1.2.0 Beta 1 — Release acceptance checklist
+# TakePath 1.2.0 Beta 2 — Release acceptance checklist
 
 > Automated CI verifies code and package creation; it **does not** demonstrate that recording/replay works on a real desktop. Check an item only after testing the **downloadable compiled artifact** on that OS.
 
 ## Windows 10/11 x64 — release gate
+
+- [ ] Run `TakePath-windows-x64-setup.exe` on a clean **non-Python** Windows profile; no `python.exe` or `pip install` required
+- [ ] Confirm Setup installs under `%LOCALAPPDATA%\Programs\TakePath`, creates a Start Menu shortcut, and optionally a desktop shortcut
+- [ ] Launch via Start Menu and verify the app title displays `1.2.0-beta.2`; verify `Windows Settings → Installed Apps → TakePath → Uninstall` removes the installed application
+- [ ] Check installing the same version again updates in place without a duplicate Installed Apps entry; check the program is closed before install/uninstall
 
 - [ ] Run the built `TakePath-windows-x64.exe` and extracted portable ZIP app; tray/dock launch without Python installed
 - [ ] At 100% and 125%/150% display scaling, record and replay a simple non-sensitive Chrome workflow: click → type → scroll → click → stop
@@ -44,10 +49,10 @@
 - [ ] Download the **Windows Actions artifact** from that run and complete the Windows release-gate checks *before creating the beta tag*
 - [ ] Review packaging output for missing DLLs/plugins and unexpected dependencies
 - [ ] Confirm release note warnings are accurate (signed/notarized status; preview platform limitations)
-- [ ] Push a **new** `v1.2.0-beta.1` tag against the tested commit; never repoint an already published tag
+- [ ] Push a **new** `v1.2.0-beta.2` tag against the tested commit; never repoint an already published tag
 - [ ] The tag-triggered workflow finishes Windows, Linux, macOS x64, macOS arm64 and Publish jobs
-- [ ] Release page is explicitly marked **Pre-release**, and includes the version notes and downloads
-- [ ] Download the published standalone Windows EXE and verify it launches after publishing
+- [ ] Release page is explicitly marked **Pre-release**, contains the version notes and all ten downloadable assets including Windows Setup
+- [ ] Download the published Setup EXE, standalone EXE, and portable ZIP; confirm all three launch independently after publishing
 - [ ] Validate `SHA256SUMS.txt` against downloads
 - [ ] Native macOS/Linux devices are tested **before** promoting a later stable tag
 - [ ] License attribution and release notes reviewed; README remains user-facing

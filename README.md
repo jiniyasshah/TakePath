@@ -78,6 +78,7 @@ Get the latest builds from **[GitHub Releases](https://github.com/jiniyasshah/Ta
 
 | Platform | Download | Notes |
 | --- | --- | --- |
+| **Windows 10/11 (x64)** | `TakePath-windows-x64-setup.exe` | Recommended installer: Start Menu shortcut, optional desktop shortcut, uninstaller |
 | **Windows 10/11 (x64)** | `TakePath-windows-x64.exe` | Standalone portable executable |
 | **Windows 10/11 (x64)** | `TakePath-windows-x64-portable.zip` | Extract and run the app from its folder |
 | **macOS — Apple Silicon** | `TakePath-macos-arm64.dmg` | Preview support; requires accessibility permissions |
@@ -89,7 +90,7 @@ The first cross-platform packages are **unsigned**; macOS applications are not n
 
 ### Quick start
 
-**Windows:** Download the standalone `.exe` and open it, or extract the portable ZIP and launch `TakePath.exe`.
+**Windows:** For a normal installation, download the `-setup.exe` and follow the installer (no Python or admin rights needed). Or use the standalone portable `.exe` without installing, or extract the portable ZIP and launch `TakePath.exe`. The installer creates an uninstall entry in Windows Installed Apps.
 
 **macOS (preview):** Download the build for your processor. Grant **Accessibility** and **Input Monitoring** permissions in **System Settings → Privacy & Security**. Some protected windows cannot be automated.
 
