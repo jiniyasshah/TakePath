@@ -1152,9 +1152,20 @@ class ControlDock(QWidget):
         playing=bool(self.owner.player and self.owner.player.isRunning())
         pending=self.owner.timer.isActive() or bool(self.owner.pending_mode)
         busy=recording or playing or pending
+        island_active=bool(self.control_island and (recording or playing))
+        # Compact mode is only used while the separate controller is active.
+        # Leave the full-size dock unchanged for idle and countdown.
+        desired_width=550 if island_active and self.compact_active else 846
+        if self.width()!=desired_width:
+            self.setFixedSize(desired_width,84)
+            self.place(str(self.owner.settings.value('dock_location','top')),initially=True)
         self.stack.setCurrentIndex(1 if busy else 0)
         self.retake_button.setVisible(bool(self.owner.project.actions) and not busy)
-        self.active_retake.setVisible(recording)
+        self.active_retake.setVisible(recording and not island_active)
+        for widget in (self.active_handle,self.pause,self.stop,self.active_separator,
+                       self.active_minimize,self.active_close):
+            widget.setVisible(not island_active)
+        self.step_status.setFixedWidth(130 if island_active and self.compact_active else 230)
         ready = self.owner.replay_ready and not busy
         self.primary_stack.setCurrentIndex(1 if ready else 0)
         self.center.setToolTip('Center before replay' if ready else 'Center before recording')
@@ -1164,7 +1175,7 @@ class ControlDock(QWidget):
         self.edit_dock.setToolTip('Back to action editor' if ready else ('Open editor after replay' if finished else 'Open action editor'))
         self.edit_dock.setFixedWidth(135 if show_editor_label else 38)
         waiting = bool(playing and self.owner.player.awaiting_secure_input)
-        self.secure_hint.setVisible(waiting)
+        self.secure_hint.setVisible(waiting and not (island_active and self.compact_active))
         self.step_status.setVisible(playing)
         if playing:
             index=self.owner.last_playback_step
@@ -1179,7 +1190,7 @@ class ControlDock(QWidget):
                 self.step_status.setToolTip('Waiting for the first action')
         self.pause.setToolTip('Continue after manual input (F7)' if waiting else 'Pause / resume (F7)')
         self._avoid_stealing_focus(busy or ready, pointer_passthrough=recording or playing)
-        self.stop.setToolTip("Use F8 to stop while recording or replaying; mouse clicks pass through the dock" if (recording or playing) else "Stop (F8)")
+        self.stop.setToolTip("Use the floating Stop controller or F8" if island_active else "Stop (F8)")
         self.stop.setIcon(vector_icon('close','#FFFFFF') if pending else vector_icon('stop','#FFFFFF'))
         self.pause.setEnabled(recording or playing)
         if recording:
@@ -1201,6 +1212,9 @@ class ControlDock(QWidget):
             self.clock.setText(str(self.owner.left_count))
         if not (recording or playing):
             self.stop.setToolTip('Cancel countdown' if pending else 'Stop (F8)')
+        paused=bool(self.owner.recorder.paused if recording else
+                    self.owner.player.pause_flag.is_set() if playing else False)
+        self._sync_control_island(island_active, paused)
 
     def closeEvent(self,event):
         if self.owner.busy():
