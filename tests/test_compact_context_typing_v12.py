@@ -80,9 +80,11 @@ class TypingSpeedTests(unittest.TestCase):
     def test_active_dock_defaults_short_and_has_sidecar(self):
         source=(ROOT/'action_studio'/'ui.py').read_text(encoding='utf-8')
         self.assertIn("'dock_short_while_active','true'",source)
-        self.assertIn('desired_width=(332 if playing else 238)',source)
-        self.assertIn('self.x()+self.width()-8',source)
+        self.assertIn('desired_width=(250 if playing else 174)',source)
+        self.assertIn('point=QPoint(self.x()+self.width(), self.y())',source)
         self.assertIn('visual_width=self.width()+extra',source)
+        self.assertIn("body_role='dockBodyJoinedLeft' if island_active else 'dockBody'",source)
+        self.assertIn('screen.left()+(screen.width()-visual_width)//2',source)
         self.assertIn('self.clock.setVisible(not (island_active and playing and self.compact_active))',source)
 
 
