@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, effective_mouse_speed
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -1241,6 +1241,16 @@ class ActionTable(QTableWidget):
         self.setDragDropOverwriteMode(False)
         self._dragged_rows = []
 
+    def mousePressEvent(self, event):
+        # Native right-click must not collapse an existing multi-selection.
+        # If the row is already selected, keep the selection for the menu.
+        if event.button() == Qt.RightButton:
+            index=self.indexAt(event.position().toPoint())
+            if index.isValid() and self.selectionModel().isSelected(index):
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
     def startDrag(self, supported_actions):
         self._dragged_rows = sorted({index.row() for index in self.selectedIndexes()})
         if not self._dragged_rows:
@@ -1570,6 +1580,8 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_action_context_menu)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.horizontalHeader().setSectionResizeMode(2,QHeaderView.Stretch)
@@ -1578,7 +1590,7 @@ class MainWindow(QMainWindow):
             self.table.horizontalHeader().setSectionResizeMode(ix,QHeaderView.Fixed)
         self.table.itemSelectionChanged.connect(self.selection_changed)
         self.table.actionsDropped.connect(self.reorder_dragged_actions)
-        self.table.setToolTip('Hold and drag action rows to reorder them. Multiple selected rows move together.')
+        self.table.setToolTip('Drag rows to reorder; right-click a selected row to edit mouse speed or other selected actions.')
         low.addWidget(self.table,1)
         # V9: cohesive toolbar. Section captions sit ABOVE their controls,
         # avoiding nested boxed labels. It scrolls horizontally only on narrow
@@ -1734,7 +1746,7 @@ class MainWindow(QMainWindow):
             if not a.enabled:continue
             duration+=a.delay
             if a.kind=='wait' and a.wait_mode!='duration':duration+=min(a.wait_timeout,5.0)  # conditional estimate only
-            if a.kind in ('click','drag'):duration+=a.path_duration*MOUSE_SPEED_FACTORS.get(self.project.mouse_speed_mode,1.0)
+            if a.kind in ('click','drag'):duration+=a.path_duration*MOUSE_SPEED_FACTORS[effective_mouse_speed(a,self.project.mouse_speed_mode)]
             if a.kind=='type' and self.project.global_typing_mode=='smooth':
                 duration+=len(a.text)*a.char_delay
             elif a.kind=='type' and self.project.global_typing_mode=='original':
@@ -1855,6 +1867,101 @@ class MainWindow(QMainWindow):
                 self.clear_action_selection()
         return super().eventFilter(obj,event)
 
+    @staticmethod
+    def _action_table_label(action):
+        # Surface overrides in the action list; inherited speed is indicated
+        # by the global Mouse Speed control below the timeline.
+        suffix=(f"  ·  Mouse: {action.mouse_speed_override.title()}"
+                if action.kind in ('click','drag','scroll')
+                and action.mouse_speed_override != 'inherit' else "")
+        return action.label()+suffix
+
+    def set_selected_mouse_speed(self, mode, rows=None):
+        """Apply one override to selected pointer actions, including multi-select."""
+        if self.busy() or mode not in ACTION_MOUSE_SPEED_MODES:
+            return
+        rows=self._rows() if rows is None else sorted(set(rows))
+        targets=[self.project.actions[i] for i in rows
+                 if 0<=i<len(self.project.actions)
+                 and self.project.actions[i].kind in ('click','drag','scroll')]
+        changed=[a for a in targets if a.mouse_speed_override!=mode]
+        if not changed:
+            return
+        for action in changed:
+            action.mouse_speed_override=mode
+        self.dirty()
+        self.refresh({self.project.actions[i].id for i in rows
+                      if 0<=i<len(self.project.actions)})
+        message=('Using global mouse speed' if mode=='inherit'
+                 else f'{mode.title()} mouse travel')
+        self.notice(f'{message} for {len(changed)} action(s).')
+
+    def set_selected_enabled(self, enabled, rows=None):
+        if self.busy():return
+        rows=self._rows() if rows is None else sorted(set(rows))
+        targets=[self.project.actions[i] for i in rows
+                 if 0<=i<len(self.project.actions)]
+        changed=[a for a in targets if a.enabled!=bool(enabled)]
+        if not changed:return
+        for a in changed:a.enabled=bool(enabled)
+        self.dirty()
+        self.refresh({a.id for a in targets})
+        self.notice(f'{"Enabled" if enabled else "Disabled"} {len(changed)} action(s).')
+
+    def show_action_context_menu(self, pos):
+        """Right click one row or keep an existing multi-selection intact."""
+        if self.busy():return
+        hit=self.table.indexAt(pos)
+        if not hit.isValid():return
+        row=hit.row()
+        selected=self._rows()
+        if row not in selected:
+            self.table.clearSelection()
+            self.table.selectRow(row)
+            selected=[row]
+        selected=sorted(set(selected))
+        mouse_actions=[self.project.actions[i] for i in selected
+                       if self.project.actions[i].kind in ('click','drag','scroll')]
+        menu=QMenu(self.table)
+        title=menu.addAction(f'{len(selected)} selected action(s)')
+        title.setEnabled(False)
+        menu.addSeparator()
+        speeds=menu.addMenu('Mouse speed')
+        speeds.setEnabled(bool(mouse_actions))
+        modes=[
+            ('Use global speed', 'inherit'),
+            ('Instant', 'instant'),
+            ('Fast', 'fast'),
+            ('Normal', 'normal'),
+            ('Slow', 'slow'),
+        ]
+        distinct={a.mouse_speed_override for a in mouse_actions}
+        for label,mode in modes:
+            entry=speeds.addAction(label + (
+                f" ({self.project.mouse_speed_mode.title()})" if mode=='inherit' else ""
+            ))
+            entry.setCheckable(True)
+            entry.setChecked(bool(mouse_actions) and distinct=={mode})
+            entry.triggered.connect(
+                lambda _checked=False,chosen=mode,rows=tuple(selected):
+                    self.set_selected_mouse_speed(chosen,rows)
+            )
+        menu.addSeparator()
+        enable=menu.addAction('Enable selected')
+        disable=menu.addAction('Disable selected')
+        enable.setEnabled(any(not self.project.actions[i].enabled for i in selected))
+        disable.setEnabled(any(self.project.actions[i].enabled for i in selected))
+        enable.triggered.connect(
+            lambda _checked=False,rows=tuple(selected):self.set_selected_enabled(True,rows))
+        disable.triggered.connect(
+            lambda _checked=False,rows=tuple(selected):self.set_selected_enabled(False,rows))
+        menu.addSeparator()
+        duplicate=menu.addAction('Duplicate selected')
+        delete=menu.addAction('Delete selected')
+        duplicate.triggered.connect(self.duplicate)
+        delete.triggered.connect(self.delete_selected)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
     def refresh(self, ids=None):
         if ids is None:
             ids={self.project.actions[r].id for r in self._rows() if r<len(self.project.actions)}
@@ -1863,7 +1970,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(len(self.project.actions))
         colors={'wait':'#9BCBFF','click':'#AFB4FF','drag':'#F1A7CE','scroll':'#90BDEB','type':'#7FD7C8','key':'#F1C38A','secure_input':'#FFB978'}
         for i,a in enumerate(self.project.actions):
-            values=[f'{i+1:03d}',a.kind.upper(),a.label(),f'{a.delay:.2f} s','Yes' if a.enabled else 'No']
+            values=[f'{i+1:03d}',a.kind.upper(),self._action_table_label(a),f'{a.delay:.2f} s','Yes' if a.enabled else 'No']
             for j,value in enumerate(values):
                 cell=QTableWidgetItem(value)
                 cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
@@ -2071,7 +2178,7 @@ class MainWindow(QMainWindow):
         if getattr(a,key)==value:return
         setattr(a,key,value)
         self.dirty()
-        self.table.item(rows[0],2).setText(a.label())
+        self.table.item(rows[0],2).setText(self._action_table_label(a))
         self.table.item(rows[0],3).setText(f'{a.delay:.2f} s')
         self.table.item(rows[0],4).setText('Yes' if a.enabled else 'No')
         self.inspector_info.setText(a.label()[:120])
