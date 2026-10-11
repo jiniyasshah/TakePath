@@ -191,6 +191,51 @@ QLineEdit#gapText { background: transparent; color: #F0F4FC; border: none; borde
   padding: 0px; font-size: 12px; font-weight: 650; selection-background-color: #506C9F; }
 QLineEdit#gapText:focus { border: none; background: transparent; }
 QLabel#gapUnit { background: transparent; color: #A5AFBF; font-size: 11px; font-weight: 600; }
+
+/* Recordly-inspired charcoal interface, with restrained cobalt-blue actions.
+   Keep recording red and security warnings distinct for legibility. */
+QWidget { background: #0F1013; color: #E9EAEE; }
+QMainWindow, QDialog { background: #0F1013; }
+QFrame#topBar { background: #17181D; border-bottom: 1px solid #292A31; }
+QFrame#rail { background: #111216; border-right: 1px solid #292A31; }
+QFrame#card { background: #17181D; border: 1px solid #292B32; border-radius: 13px; }
+QFrame#soft, QFrame#sectionStrip { background: #1D1F25; border: 1px solid #30323A; }
+QFrame#toolbar { background: #191B20; border: 1px solid #2C2F37; }
+QFrame#replayToolbar { background: #16181D; border: 1px solid #30323A; }
+QFrame#toolbarDivider, QFrame#separator { background: #34363E; }
+QLabel#tiny, QLabel#toolbarCaption { color: #9396A0; }
+QLabel#muted { color: #A2A5AF; }
+QPushButton { background: #24262D; border: 1px solid #353842; color: #E9EAEE; }
+QPushButton:hover { background: #30333C; border-color: #525660; }
+QPushButton#primary { background: #316BEA; border-color: #316BEA; color: white; }
+QPushButton#primary:hover { background: #407BF5; border-color: #407BF5; }
+QPushButton#quiet { background: transparent; border-color: transparent; color: #D5D7DE; }
+QPushButton#quiet:hover { background: #292B32; }
+QPushButton#outline { background: #1E2026; border: 1px solid #393C46; }
+QPushButton#outline:hover { background: #292D36; }
+QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+  background: #202228; color: #EFF0F4; border: 1px solid #393C45;
+  border-radius: 8px; selection-background-color: #315FBF; }
+QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
+QDoubleSpinBox:focus { border-color: #427DFC; }
+QTableWidget { background: #131419; alternate-background-color: #191B21;
+  selection-background-color: #253A65; selection-color: #F6F8FF;
+  gridline-color: #25272F; }
+QHeaderView::section { background: #1D1F25; color: #A5A9B4;
+  border: 0; border-bottom: 1px solid #373941; }
+QMenu { background: #1B1D23; color: #EFF0F4;
+  border: 1px solid #3B3D47; border-radius: 10px; padding: 7px; }
+QMenu::item:selected { background: #304A78; color: #FFFFFF; }
+QMenu::separator { background: #343740; }
+QDoubleSpinBox#toolbarInput, QComboBox#toolbarInput {
+  background: #24262D; color: #E9EAEE; border: 1px solid #393C46; }
+QPushButton#toolbarApply { background: #294675; border: 1px solid #4164A2; }
+QPushButton#toolbarApply:hover { background: #345A98; }
+QPushButton#toolbarToggle { background: #252730; border-color: #383B44; }
+QPushButton#toolbarToggle:checked { background: #253C68; border-color: #4276DA; }
+QFrame#gapControl { background: #24262D; border-color: #393C46; }
+QFrame#dockBody, QFrame#dockBodyJoinedLeft, QFrame#dockBodyJoinedRight {
+  background: #17181E; }
 """
 
 # Compact, rendered vector icons instead of platform-dependent Unicode glyphs.
