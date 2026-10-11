@@ -219,6 +219,33 @@ class Project:
                    recorded_window_bounds=window_anchor, adaptive_wait=(value.get("adaptive_wait") is True))
 
 
+
+def format_replay_step(action: Action, index: int, total: int) -> str:
+    """Compact live dock text with stable original step numbers.
+
+    Do not expose recorded text, secure-input contents or private field
+    values in the overlay that could itself appear in screen recordings.
+    """
+    if action.kind == "wait":
+        detail = (f"WAIT {action.delay:.1f}s" if action.wait_mode == "duration"
+                  else "WAIT · CONDITION")
+    elif action.kind == "click":
+        detail = f"CLICK {action.x}, {action.y}"
+    elif action.kind == "drag":
+        detail = "DRAG"
+    elif action.kind == "scroll":
+        detail = "SCROLL"
+    elif action.kind == "type":
+        detail = f"TYPE ({len(action.text)} chars)"
+    elif action.kind == "key":
+        detail = "KEY"
+    elif action.kind == "secure_input":
+        detail = "SECURE INPUT"
+    else:
+        detail = action.kind.upper()
+    return f"STEP {index+1:03d}/{total:03d} · {detail}"
+
+
 def remove_actions(actions: list[Action], selected_ids: set[str]) -> list[Action]:
     """Delete all selected IDs in one operation while preserving remaining order."""
     return [action for action in actions if action.id not in selected_ids]

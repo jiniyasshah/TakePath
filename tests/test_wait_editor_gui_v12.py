@@ -69,7 +69,12 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertTrue(self.editor.inspector_title.isVisible())
         QTest.mouseClick(self.editor.inspector_title,Qt.LeftButton)
         self.assertEqual(self.editor._rows(),[0])
+        # Renaming the workflow is a real editable input, not blank space.
         QTest.mouseClick(self.editor.name,Qt.LeftButton)
+        self.assertEqual(self.editor._rows(),[0])
+        from PySide6.QtCore import QPoint
+        blank=QPoint(2,self.editor.inspector_panel.height()//2)
+        QTest.mouseClick(self.editor.inspector_panel,Qt.LeftButton,pos=blank)
         self.assertEqual(self.editor._rows(),[])
 
 
@@ -142,6 +147,81 @@ class EditorWaitSmokeTests(unittest.TestCase):
         QTest.mouseClick(self.editor.inspector_panel,Qt.LeftButton,pos=blank)
         self.qt.processEvents()
         self.assertEqual(self.editor._rows(),[])
+
+    def test_bottom_toolbar_controls_keep_selected_action(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        self.editor.table.selectRow(0)
+        self.qt.processEvents()
+        controls=[
+            ('timing gap',self.editor.uniform.field),
+            ('apply to selected',self.editor.uniform_apply),
+            ('mouse path',self.editor.global_mode),
+            ('typing style',self.editor.global_typing),
+            ('center cursor',self.editor.play_center),
+            ('adaptive wait',self.editor.auto_wait_toggle),
+            ('playback speed',self.editor.speed),
+        ]
+        for name,control in controls:
+            with self.subTest(control=name):
+                self.editor.table.selectRow(0)
+                self.qt.processEvents()
+                self.assertTrue(control.isVisibleTo(self.editor),name)
+                QTest.mouseClick(control,Qt.LeftButton)
+                self.qt.processEvents()
+                self.assertEqual(self.editor._rows(),[0],
+                                 f'{name} cleared the selected action')
+                # Close editable combo dropdowns before the next control.
+                if name in ('mouse path','typing style','playback speed'):
+                    QTest.keyClick(control,Qt.Key_Escape)
+                    self.qt.processEvents()
+
+    def test_toolbar_values_change_without_deselecting(self):
+        self.editor.table.selectRow(0)
+        action=self.editor.project.actions[0]
+        self.editor.uniform.setValue(1.3)
+        self.editor.uniform_apply.click()
+        self.qt.processEvents()
+        self.assertEqual(action.delay,1.3)
+        self.assertEqual(self.editor._rows(),[0])
+        self.editor.global_mode.setCurrentText('Straight')
+        self.editor.global_typing.setCurrentText('Instant')
+        self.editor.speed.setCurrentText('1.5×')
+        self.qt.processEvents()
+        self.assertEqual(self.editor._rows(),[0])
+        self.assertEqual(self.editor.project.cursor_mode,'straight')
+        self.assertEqual(self.editor.project.global_typing_mode,'instant')
+
+    def test_replay_dock_displays_step_marker(self):
+        from types import SimpleNamespace
+        self.editor.project.actions=[
+            self.Action(kind='click',x=20,y=40),
+            self.Action(kind='wait',delay=3,wait_mode='duration'),
+            self.Action(kind='type',text='secret-data'),
+        ]
+        flag=SimpleNamespace(is_set=lambda:False)
+        self.editor.player=SimpleNamespace(isRunning=lambda:True,
+                                            awaiting_secure_input=False,
+                                            pause_flag=flag,
+                                            paused_at=0,
+                                            pause_accumulated=0,
+                                            cancel=lambda:None,
+                                            wait=lambda _ms:None)
+        try:
+            self.editor.dock.show()
+            self.editor.last_playback_step=1
+            self.editor.dock.sync()
+            self.qt.processEvents()
+            self.assertTrue(self.editor.dock.step_status.isVisible())
+            self.assertIn('STEP 002/003',self.editor.dock.step_status.toolTip())
+            self.assertIn('WAIT 3.0s',self.editor.dock.step_status.toolTip())
+            self.editor.last_playback_step=2
+            self.editor.dock.sync()
+            self.assertIn('TYPE (11 chars)',self.editor.dock.step_status.toolTip())
+            self.assertNotIn('secret-data',self.editor.dock.step_status.toolTip())
+        finally:
+            self.editor.player=None
+            self.editor.dock.hide()
 
 if __name__=='__main__':
     unittest.main()

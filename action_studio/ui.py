@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -787,6 +787,12 @@ class ControlDock(QWidget):
         self.clock=L('00:00','recordClock')
         self.clock.setMinimumWidth(78)
         row.addWidget(self.clock)
+        self.step_status=L('','muted')
+        self.step_status.setFixedWidth(230)
+        self.step_status.setStyleSheet('color:#C6D2F5; font-size:11px; font-weight:650;')
+        self.step_status.setToolTip('Current replay action')
+        self.step_status.setVisible(False)
+        row.addWidget(self.step_status)
         self.secure_hint=L('Manual input in app','muted')
         self.secure_hint.setStyleSheet('color:#C2CBF4; font-size:11px; font-weight:600;')
         self.secure_hint.setVisible(False)
@@ -1015,6 +1021,18 @@ class ControlDock(QWidget):
         self.edit_dock.setFixedWidth(135 if show_editor_label else 38)
         waiting = bool(playing and self.owner.player.awaiting_secure_input)
         self.secure_hint.setVisible(waiting)
+        self.step_status.setVisible(playing)
+        if playing:
+            index=self.owner.last_playback_step
+            if 0 <= index < len(self.owner.project.actions):
+                summary=format_replay_step(self.owner.project.actions[index],index,
+                                           len(self.owner.project.actions))
+                self.step_status.setText(self.step_status.fontMetrics().elidedText(
+                    summary, Qt.ElideRight, self.step_status.width()-5))
+                self.step_status.setToolTip(summary)
+            else:
+                self.step_status.setText('Preparing replay…')
+                self.step_status.setToolTip('Waiting for the first action')
         self.pause.setToolTip('Continue after manual input (F7)' if waiting else 'Pause / resume (F7)')
         self._avoid_stealing_focus(busy or ready)
         self.stop.setIcon(vector_icon('close','#FFFFFF') if pending else vector_icon('stop','#FFFFFF'))
@@ -1742,11 +1760,32 @@ class MainWindow(QMainWindow):
             return field_or_label(self.inspector_panel.childAt(inside))
         return False
 
+    def _editor_control_hit(self, obj, event):
+        """Identify real controls by cursor position, including nested inputs.
+
+        A click on the timing GapInput may be propagated to the toolbar or
+        even the main window; checking only the receiving widget caused the
+        selected action to be cleared while the user adjusted a setting.
+        """
+        interactive=(QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit,
+                     QTextEdit, QAbstractItemView, QScrollBar, QLabel)
+        # Use the actual widget at the mouse coordinates first, then the
+        # event receiver. All parents of nested line-edit/spin controls
+        # still count as interactions with an editing widget.
+        actual=QApplication.widgetAt(event.globalPosition().toPoint())
+        for source in (actual, obj):
+            widget=source
+            while isinstance(widget, QWidget) and widget is not self:
+                if isinstance(widget, interactive) and self._inside_widget(widget, self):
+                    return True
+                widget=widget.parentWidget()
+        return False
+
     def eventFilter(self, obj, event):
-        # Deselect only on actual empty editor space, never on an
-        # inspector field or the controls used to change selected actions.
-        # The mouse press target is checked instead of treating the entire
-        # inspector as a protected blank surface.
+        # Keep selection for every real editor control, including all
+        # bottom playback settings. Clear only on genuinely empty surfaces.
+        # Hit-testing actual mouse coordinates protects against Qt bubbling
+        # a child input event to its parent container.
         if (event.type() == QEvent.MouseButtonPress and
                 isinstance(obj, QWidget) and self.isVisible() and
                 hasattr(self, 'table') and self._rows() and
@@ -1760,6 +1799,12 @@ class MainWindow(QMainWindow):
             if self._click_within(obj, self.inspector_panel, event):
                 if not self._inspector_field_hit(obj, event):
                     self.clear_action_selection()
+                return super().eventFilter(obj,event)
+            if self._click_within(obj, self.toolbar_scroll, event):
+                if not self._editor_control_hit(obj, event):
+                    self.clear_action_selection()
+                return super().eventFilter(obj,event)
+            if self._editor_control_hit(obj, event):
                 return super().eventFilter(obj,event)
             protected=[self.add_action_button, self.before_action_button,
                        self.rail_add_button, self.rail_delete_button,
@@ -2577,6 +2622,7 @@ class MainWindow(QMainWindow):
         # Do not bring the full editor to the front during replay.
         if 0<=i<len(self.project.actions):
             self.status_line.setText(f'Running step {i+1} / {len(self.project.actions)}')
+        self.dock.sync()
 
     def _adaptive_wait_status(self, waiting):
         self.player_waiting_for_ui=bool(waiting)
