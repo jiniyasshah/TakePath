@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, effective_mouse_speed
+from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, ACTION_TYPING_SPEED_MODES, TYPING_SPEED_FACTORS, effective_mouse_speed, effective_typing_speed
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -1897,10 +1897,13 @@ class MainWindow(QMainWindow):
             duration+=a.delay
             if a.kind=='wait' and a.wait_mode!='duration':duration+=min(a.wait_timeout,5.0)  # conditional estimate only
             if a.kind in ('click','drag'):duration+=a.path_duration*MOUSE_SPEED_FACTORS[effective_mouse_speed(a,self.project.mouse_speed_mode)]
-            if a.kind=='type' and self.project.global_typing_mode=='smooth':
-                duration+=len(a.text)*a.char_delay
-            elif a.kind=='type' and self.project.global_typing_mode=='original':
-                duration+=a.char_timings[-1] if len(a.char_timings)==len(a.text) and a.char_timings else len(a.text)*a.char_delay
+            if a.kind=='type':
+                policy=effective_typing_speed(a,self.project.global_typing_mode)
+                if policy=='original':
+                    duration+=(a.char_timings[-1] if len(a.char_timings)==len(a.text) and a.char_timings
+                               else len(a.text)*a.char_delay)
+                elif policy!='instant':
+                    duration+=len(a.text)*a.char_delay*TYPING_SPEED_FACTORS.get(policy,1.0)
         multiplier=float(self.speed.currentText().replace('×','')) if self.speed.currentText() else 1.0
         self.duration_label.setText(f'{duration/max(multiplier,0.01):.1f} s')
         count=len(self.project.actions)
@@ -2021,10 +2024,12 @@ class MainWindow(QMainWindow):
     def _action_table_label(action):
         # Surface overrides in the action list; inherited speed is indicated
         # by the global Mouse Speed control below the timeline.
-        suffix=(f"  ·  Mouse: {action.mouse_speed_override.title()}"
-                if action.kind in ('click','drag','scroll')
-                and action.mouse_speed_override != 'inherit' else "")
-        return action.label()+suffix
+        mouse=(f"  ·  Mouse: {action.mouse_speed_override.title()}"
+               if action.kind in ('click','drag','scroll')
+               and action.mouse_speed_override != 'inherit' else "")
+        typing=(f"  ·  Typing: {action.typing_speed_override.title()}"
+                if action.kind == 'type' and action.typing_speed_override!='inherit' else "")
+        return action.label()+mouse+typing
 
     def set_selected_mouse_speed(self, mode, rows=None):
         """Apply one override to selected pointer actions, including multi-select."""
@@ -2058,8 +2063,53 @@ class MainWindow(QMainWindow):
         self.refresh({a.id for a in targets})
         self.notice(f'{"Enabled" if enabled else "Disabled"} {len(changed)} action(s).')
 
+    def set_selected_typing_speed(self, mode, rows=None):
+        """Only Type actions receive typing overrides; never secure values."""
+        if self.busy() or mode not in ACTION_TYPING_SPEED_MODES:
+            return
+        rows=self._rows() if rows is None else sorted(set(rows))
+        candidates=[self.project.actions[i] for i in rows
+                    if 0<=i<len(self.project.actions)
+                    and self.project.actions[i].kind=='type']
+        changed=[a for a in candidates if a.typing_speed_override != mode]
+        if not changed:return
+        for a in changed:a.typing_speed_override=mode
+        self.dirty()
+        self.refresh({self.project.actions[i].id for i in rows
+                      if 0<=i<len(self.project.actions)})
+        self.notice(f'Typing speed: {mode.title()} for {len(changed)} action(s).')
+
+    def set_selected_wait_duration(self, seconds, rows=None):
+        if self.busy() or seconds not in (1.0,3.0,5.0,10.0):
+            return
+        rows=self._rows() if rows is None else sorted(set(rows))
+        targets=[self.project.actions[i] for i in rows
+                 if 0<=i<len(self.project.actions)
+                 and self.project.actions[i].kind=='wait'
+                 and self.project.actions[i].wait_mode=='duration']
+        changed=[a for a in targets if a.delay!=seconds]
+        if not changed:return
+        for a in changed:a.delay=seconds
+        self.dirty()
+        self.refresh({self.project.actions[i].id for i in rows
+                      if 0<=i<len(self.project.actions)})
+        self.notice(f'Fixed wait: {seconds:g}s for {len(changed)} action(s).')
+
+    @staticmethod
+    def _close_irrelevant_submenus(menu, hovered_action):
+        """Close submenu as soon as another root command is hovered.
+
+        On Windows/Qt the safe-triangle menu delay sometimes left the Mouse
+        speed submenu open while hovering Disable selected. Explicitly close
+        any submenu whose parent root action is no longer hovered.
+        """
+        for root in menu.actions():
+            child=root.menu()
+            if child is not None and root is not hovered_action and child.isVisible():
+                child.hide()
+
     def build_action_context_menu(self, pos):
-        """Build a row menu without opening the native popup (testable)."""
+        """Context-sensitive actions for the exact selected action types."""
         if self.busy():return None
         hit=self.table.indexAt(pos)
         if not hit.isValid():return None
@@ -2070,37 +2120,64 @@ class MainWindow(QMainWindow):
             self.table.selectRow(row)
             selected=[row]
         selected=sorted(set(selected))
-        mouse_actions=[self.project.actions[i] for i in selected
-                       if self.project.actions[i].kind in ('click','drag','scroll')]
+        picked=[self.project.actions[i] for i in selected
+                if 0<=i<len(self.project.actions)]
+        mouse_actions=[a for a in picked if a.kind in ('click','drag','scroll')]
+        typed=[a for a in picked if a.kind=='type']
+        timed=[a for a in picked if a.kind=='wait' and a.wait_mode=='duration']
+
         menu=QMenu(self.table)
         title=menu.addAction(f'{len(selected)} selected action(s)')
         title.setEnabled(False)
         menu.addSeparator()
-        speeds=menu.addMenu('Mouse speed')
-        speeds.setEnabled(bool(mouse_actions))
-        modes=[
-            ('Use global speed', 'inherit'),
-            ('Instant', 'instant'),
-            ('Fast', 'fast'),
-            ('Normal', 'normal'),
-            ('Slow', 'slow'),
-        ]
-        distinct={a.mouse_speed_override for a in mouse_actions}
-        for label,mode in modes:
-            entry=speeds.addAction(label + (
-                f" ({self.project.mouse_speed_mode.title()})" if mode=='inherit' else ""
-            ))
-            entry.setCheckable(True)
-            entry.setChecked(bool(mouse_actions) and distinct=={mode})
-            entry.triggered.connect(
-                lambda _checked=False,chosen=mode,rows=tuple(selected):
-                    self.set_selected_mouse_speed(chosen,rows)
-            )
-        menu.addSeparator()
+
+        # Do not show mouse/typing controls for unrelated action types.
+        if mouse_actions:
+            mouse=menu.addMenu('Mouse speed')
+            modes=[('Use global speed','inherit'),('Instant','instant'),
+                   ('Fast','fast'),('Normal','normal'),('Slow','slow')]
+            distinct={a.mouse_speed_override for a in mouse_actions}
+            for label,mode in modes:
+                action=mouse.addAction(label + (
+                    f" ({self.project.mouse_speed_mode.title()})"
+                    if mode=='inherit' else ''))
+                action.setCheckable(True)
+                action.setChecked(distinct=={mode})
+                action.triggered.connect(
+                    lambda _checked=False,chosen=mode,rows=tuple(selected):
+                        self.set_selected_mouse_speed(chosen,rows))
+
+        if typed:
+            typing=menu.addMenu('Typing speed')
+            modes=[('Use global typing','inherit'),('Original rhythm','original'),
+                   ('Normal','normal'),('Fast','fast'),('Slow','slow'),('Instant','instant')]
+            distinct={a.typing_speed_override for a in typed}
+            for label,mode in modes:
+                action=typing.addAction(label+(
+                    f" ({self.project.global_typing_mode.title()})"
+                    if mode=='inherit' else ''))
+                action.setCheckable(True)
+                action.setChecked(distinct=={mode})
+                action.triggered.connect(
+                    lambda _checked=False,chosen=mode,rows=tuple(selected):
+                        self.set_selected_typing_speed(chosen,rows))
+
+        if timed:
+            pauses=menu.addMenu('Wait duration')
+            for seconds in (1.0,3.0,5.0,10.0):
+                action=pauses.addAction(f'{seconds:g} seconds')
+                action.setCheckable(True)
+                action.setChecked(all(a.delay==seconds for a in timed))
+                action.triggered.connect(
+                    lambda _checked=False,value=seconds,rows=tuple(selected):
+                        self.set_selected_wait_duration(value,rows))
+
+        if mouse_actions or typed or timed:
+            menu.addSeparator()
         enable=menu.addAction('Enable selected')
         disable=menu.addAction('Disable selected')
-        enable.setEnabled(any(not self.project.actions[i].enabled for i in selected))
-        disable.setEnabled(any(self.project.actions[i].enabled for i in selected))
+        enable.setEnabled(any(not a.enabled for a in picked))
+        disable.setEnabled(any(a.enabled for a in picked))
         enable.triggered.connect(
             lambda _checked=False,rows=tuple(selected):self.set_selected_enabled(True,rows))
         disable.triggered.connect(
@@ -2110,6 +2187,9 @@ class MainWindow(QMainWindow):
         delete=menu.addAction('Delete selected')
         duplicate.triggered.connect(self.duplicate)
         delete.triggered.connect(self.delete_selected)
+
+        menu.hovered.connect(
+            lambda hovered:self._close_irrelevant_submenus(menu,hovered))
         return menu
 
     def show_action_context_menu(self, pos):
