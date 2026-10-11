@@ -42,7 +42,7 @@ SURFACE = '#141720'
 
 CSS = """
 * { font-family: 'Segoe UI'; }
-QWidget { background: #0B0D12; color: #EDF0F7; font-size: 12px; }
+QWidget { color: #EDF0F7; font-size: 12px; }
 QLabel { background: transparent; }
 QMainWindow, QDialog { background: #0B0D12; }
 QFrame#dockBody { background: #12141C; border: 1px solid #2B303D; border-radius: 23px; }
@@ -194,8 +194,10 @@ QLabel#gapUnit { background: transparent; color: #A5AFBF; font-size: 11px; font-
 
 /* Recordly-inspired charcoal interface, with restrained cobalt-blue actions.
    Keep recording red and security warnings distinct for legibility. */
-QWidget { background: #0F1013; color: #E9EAEE; }
-QMainWindow, QDialog { background: #0F1013; }
+QWidget { color: #E9EAEE; }
+QMainWindow, QDialog, QWidget#editorRoot { background: #0F1013; }
+QLabel, QCheckBox, QWidget#propertyGroup, QWidget#inspectorHolder,
+QWidget#secureAutoFill { background: transparent; }
 QFrame#topBar { background: #17181D; border-bottom: 1px solid #292A31; }
 QFrame#rail { background: #111216; border-right: 1px solid #292A31; }
 QFrame#card { background: #17181D; border: 1px solid #292B32; border-radius: 13px; }
@@ -291,8 +293,15 @@ def password_reveal_button(field):
 def app_icon():
     """Bundled Windows icon for taskbar, titlebar and notification area."""
     bundle = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
-    icon_file = bundle / 'assets' / ('takepath.ico' if sys.platform=='win32' else 'takepath-icon.png')
-    return QIcon(str(icon_file)) if icon_file.is_file() else vector_icon('cursor','#8BA5FF',32)
+    # Use the high-resolution source for smooth Windows taskbar/titlebar scaling.
+    candidates=('takepath-icon.png','takepath.ico') if sys.platform=='win32' else ('takepath-icon.png',)
+    for name in candidates:
+        icon_file=bundle / 'assets' / name
+        if icon_file.is_file():
+            icon=QIcon(str(icon_file))
+            if not icon.isNull():
+                return icon
+    return vector_icon('cursor','#8BA5FF',32)
 
 
 def vector_icon(name, color='#CED0DE', size=24):
@@ -1716,6 +1725,7 @@ class MainWindow(QMainWindow):
         self.prepared_secure={}
         self.portable_unlocked={}  # in-memory decrypted secure action IDs
         self._dock_taskbar_minimized=False
+        self._dock_taskbar_mode=False
         try:
             self.credential_store=credential_store()
         except CredentialError:
@@ -1775,7 +1785,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1010,690)
 
     def _build_editor(self):
-        base=QWidget(); self.setCentralWidget(base)
+        base=QWidget(); base.setObjectName('editorRoot'); self.setCentralWidget(base)
         root=V(base,spacing=0)
         head=F('topBar'); hb=H(head,(22,12,22,12),11)
         logomark=QLabel()
@@ -1839,6 +1849,7 @@ class MainWindow(QMainWindow):
         self.inspector_info.setWordWrap(True)
         ins.addWidget(self.inspector_info)
         scroller=QScrollArea(); scroller.setWidgetResizable(True)
+        scroller.viewport().setAutoFillBackground(False)
         scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         holder=QWidget(); holder.setObjectName('inspectorHolder'); form=V(holder,(3,6,3,10),9)
         self.enable=QCheckBox('Include in playback')
@@ -1871,23 +1882,27 @@ class MainWindow(QMainWindow):
         self.secure_mode.addItem('Skip', 'skip')
         self.secure_mode.currentIndexChanged.connect(self._change_secure_mode)
         sv.addWidget(self.secure_mode)
-        self.secure_autofill=QWidget();secure_form=V(self.secure_autofill,spacing=7)
+        self.secure_autofill=QWidget()
+        self.secure_autofill.setObjectName('secureAutoFill')
+        secure_form=V(self.secure_autofill,spacing=7)
         self.secret_status=L('Not configured','muted')
         self.secret_status.setWordWrap(True)
         secure_form.addWidget(self.secret_status)
         self.secret_edit=QLineEdit();self.secret_edit.setEchoMode(QLineEdit.Password)
         self.secret_edit.setPlaceholderText('Enter value to auto-fill (optional)')
         self.secret_edit.setMaxLength(512)
+        self.secret_edit.setMinimumWidth(0)
         secret_row=H(spacing=7)
         secret_row.addWidget(self.secret_edit,1)
         self.secret_reveal=password_reveal_button(self.secret_edit)
         secret_row.addWidget(self.secret_reveal)
         secure_form.addLayout(secret_row)
-        self.secret_remember=QCheckBox('Remember securely on this device (Windows Credential Manager / Keychain)')
+        self.secret_remember=QCheckBox('Remember securely on this device')
+        self.secret_remember.setToolTip('Stored in Windows Credential Manager or the supported system keychain; only a reference is saved in a normal project.')
         self.secret_remember.setChecked(bool(self.credential_store))
         self.secret_remember.setEnabled(bool(self.credential_store))
         secure_form.addWidget(self.secret_remember)
-        self.secret_apply_all=QCheckBox('Use for all auto-fill secure input steps')
+        self.secret_apply_all=QCheckBox('Use for all secure fields')
         self.secret_apply_all.setToolTip('Opt in only if every protected field requires the same value.')
         self.secret_apply_all.setChecked(False)
         secure_form.addWidget(self.secret_apply_all)
@@ -2993,24 +3008,27 @@ class MainWindow(QMainWindow):
         return self.save()
 
     def minimize_dock_to_taskbar(self):
-        """Show a real Windows taskbar entry instead of hiding in the tray."""
+        """Hide the floating bar, but retain the ordinary taskbar button."""
+        self._dock_taskbar_mode=True
         self._dock_taskbar_minimized=True
         self.dock.hide()
-        self.setWindowTitle(f'TakePath {__version__} · Recorder')
-        self.showMinimized()
+        if not self.isMinimized():
+            self.showMinimized()
 
     def changeEvent(self,event):
         super().changeEvent(event)
         if (event.type()==QEvent.WindowStateChange and
-                self._dock_taskbar_minimized and not self.isMinimized()):
+                self._dock_taskbar_mode and not self.isMinimized()):
+            # Restoring the taskbar proxy raises the recorder instead of
+            # briefly showing the otherwise-hidden full editor.
             QTimer.singleShot(0,self._restore_minimized_dock)
 
     def _restore_minimized_dock(self):
-        if not self._dock_taskbar_minimized:return
+        if not self._dock_taskbar_mode or self.isMinimized():return
         self._dock_taskbar_minimized=False
-        self.setWindowTitle(f'TakePath {__version__}')
-        self.hide()
+        self.showMinimized()
         self.dock.show()
+        self.dock.raise_()
         self.dock.sync()
 
     def export_encrypted_project(self):
@@ -3049,6 +3067,7 @@ class MainWindow(QMainWindow):
 
     def show_editor(self):
         if self.busy():return
+        self._dock_taskbar_mode=False
         self._dock_taskbar_minimized=False
         self.replay_ready=False
         self.prepared_secure.clear()
@@ -3058,9 +3077,12 @@ class MainWindow(QMainWindow):
         self.dock.hide()
 
     def show_dock(self):
+        self._dock_taskbar_mode=True
         self._dock_taskbar_minimized=False
+        # Unlike hide(), showMinimized() retains the app in the taskbar.
+        if not self.isMinimized():
+            self.showMinimized()
         self.dock.show()
-        self.hide()
         self.dock.raise_()
         self.dock.sync()
 
@@ -3266,6 +3288,8 @@ class MainWindow(QMainWindow):
             self.notice(f'Actions saved in memory; still preview unavailable: {e}')
         self.refresh({self.project.actions[0].id} if self.project.actions else set())
         if self.project.preview_jpeg:self.set_preview_mode('compact')
+        self._dock_taskbar_mode=False
+        self._dock_taskbar_minimized=False
         self.showMaximized()
         self.raise_()
         self.activateWindow()
@@ -3597,5 +3621,7 @@ def run():
     app.setStyleSheet(CSS)
     font=app.font();font.setFamily('Segoe UI' if sys.platform=='win32' else ('SF Pro Text' if sys.platform=='darwin' else 'Noto Sans'));font.setPointSize(10);app.setFont(font)
     window=MainWindow()
+    window._dock_taskbar_mode=True
+    window.showMinimized()  # establish the persistent taskbar button at launch
     window.dock.show()
     return app.exec()

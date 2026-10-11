@@ -264,6 +264,16 @@ class EditorWaitSmokeTests(unittest.TestCase):
                if 'They never go in project JSON' in l.text()]
         self.assertEqual(len(hints),1)
         self.assertTrue(hints[0].wordWrap())
+        # The text field and checkboxes must fit the 320px inspector viewport.
+        viewport=self.editor.inspector_form.viewport()
+        for field in (self.editor.secret_edit,self.editor.secret_remember,
+                      self.editor.secret_apply_all,self.editor.secret_reveal):
+            self.assertLessEqual(
+                field.mapTo(viewport,field.rect().topRight()).x(),
+                viewport.width()+2,field.objectName() or type(field).__name__)
+        self.assertFalse(viewport.autoFillBackground())
+        self.assertIn('Remember securely on this device',self.editor.secret_remember.text())
+        self.assertNotIn('Credential Manager / Keychain',self.editor.secret_remember.text())
 
     def test_context_menu_applies_fast_to_multiple_selected_mouse_actions(self):
         from PySide6.QtWidgets import QTableWidgetSelectionRange
@@ -663,6 +673,37 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertFalse(self.editor._dock_taskbar_minimized)
         self.assertTrue(dock.isVisible())
         dock.hide()
+
+    def test_taskbar_remains_available_during_recorder_mode(self):
+        dock=self.editor.dock
+        self.editor.show_dock()
+        self.qt.processEvents()
+        self.assertTrue(self.editor.isVisible())
+        self.assertTrue(self.editor.isMinimized())
+        self.assertTrue(dock.isVisible())
+        dock.minimize_to_taskbar()
+        self.qt.processEvents()
+        self.assertTrue(self.editor.isVisible())
+        self.assertTrue(self.editor.isMinimized())
+        self.assertFalse(dock.isVisible())
+        self.editor.showNormal()
+        self.qt.processEvents()
+        from PySide6.QtTest import QTest
+        QTest.qWait(70)
+        self.assertTrue(self.editor.isMinimized())
+        self.assertTrue(dock.isVisible())
+        self.editor.show_editor()
+        self.qt.processEvents()
+        self.assertFalse(self.editor._dock_taskbar_mode)
+        self.assertTrue(self.editor.isVisible())
+        self.assertFalse(dock.isVisible())
+
+    def test_windows_taskbar_icon_is_loaded(self):
+        from action_studio.ui import app_icon
+        from PySide6.QtCore import QSize
+        icon=app_icon()
+        self.assertFalse(icon.isNull())
+        self.assertFalse(icon.pixmap(QSize(32,32)).isNull())
 
     def test_compact_dock_retains_combined_center_on_resize(self):
         from PySide6.QtTest import QTest
