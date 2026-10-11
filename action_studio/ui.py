@@ -3530,7 +3530,7 @@ def run():
         pass
     app=QApplication(sys.argv)
     app.setApplicationName('TakePath')
-    app.setApplicationVersion('1.1.0')
+    app.setApplicationVersion(__version__)
     app.setQuitOnLastWindowClosed(False)  # the only initial window is a Qt.Tool dock
     app.setWindowIcon(app_icon())
     app.setStyle('Fusion')
