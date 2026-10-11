@@ -591,6 +591,9 @@ class SceneCanvas(QWidget):
             self.drag_index=i
         else:
             self.drag_index=-1
+            # A blank spatial preview should not leave an unrelated action
+            # selected in the timeline.
+            self.owner.clear_action_selection()
 
     def mouseMoveEvent(self,event):
         if self.drag_index >= 0 and event.buttons() & Qt.LeftButton:
@@ -1629,6 +1632,37 @@ class MainWindow(QMainWindow):
 
     def _rows(self):
         return sorted({index.row() for index in self.table.selectedIndexes()})
+
+    def clear_action_selection(self):
+        if not self.updating and self._rows():
+            self.table.clearSelection()
+
+    @staticmethod
+    def _inside_widget(widget, ancestor):
+        return widget is ancestor or ancestor.isAncestorOf(widget)
+
+    def eventFilter(self, obj, event):
+        # Ignore the dock, popups, dialogs and windows other than the editor.
+        # Do not steal selection from inspector fields or timeline commands
+        # because those widgets operate on the current selection.
+        if (event.type() == QEvent.MouseButtonPress and
+                isinstance(obj, QWidget) and self.isVisible() and
+                hasattr(self, 'table') and self._rows() and
+                self._inside_widget(obj, self)):
+            if self._inside_widget(obj, self.table):
+                viewport=self.table.viewport()
+                if self._inside_widget(obj, viewport):
+                    point=viewport.mapFromGlobal(obj.mapToGlobal(event.position().toPoint()))
+                    if not self.table.indexAt(point).isValid():
+                        self.clear_action_selection()
+                return super().eventFilter(obj,event)
+            protected=[self.inspector_panel, self.add_action_button,
+                       self.before_action_button, self.rail_add_button,
+                       self.rail_delete_button, self.canvas]
+            protected.extend(self.action_operation_buttons)
+            if not any(self._inside_widget(obj,w) for w in protected):
+                self.clear_action_selection()
+        return super().eventFilter(obj,event)
 
     def refresh(self, ids=None):
         if ids is None:
