@@ -606,7 +606,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.editor.set_secure_value()
         self.assertEqual(a.secure_ref,b.secure_ref)
         self.assertEqual(values[a.secure_ref],'shared-dummy-passphrase')
-        self.assertEqual(len(values),1)
+        self.assertEqual(len(values),3)  # shared ref plus both stable action IDs
+        self.assertEqual(values[a.id],'shared-dummy-passphrase')
+        self.assertEqual(values[b.id],'shared-dummy-passphrase')
         self.assertNotIn('shared-dummy-passphrase',str(self.editor.project.to_dict()))
         # Editing one item later must not overwrite the still-shared value.
         self.editor.refresh({a.id})
@@ -615,6 +617,25 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.editor.set_secure_value()
         self.assertNotEqual(a.secure_ref,b.secure_ref)
         self.assertEqual(values[b.secure_ref],'shared-dummy-passphrase')
+
+    def test_secure_vault_alias_survives_unsaved_reference(self):
+        from types import SimpleNamespace
+        from action_studio.core import Project
+        a=self.Action(kind='secure_input',secure_mode='auto')
+        saved={a.id:'persisted-dummy'}
+        self.editor.project=Project(actions=[a])
+        self.editor.credential_store=SimpleNamespace(
+            get=lambda ref:saved.get(ref),
+            set=lambda ref,value:saved.__setitem__(ref,value),
+            delete=lambda ref:saved.pop(ref,None))
+        self.editor.refresh({a.id})
+        self.assertEqual(a.secure_ref,'')
+        self.assertEqual(self.editor._read_saved_secret(a),'persisted-dummy')
+        self.assertTrue(self.editor._prepare_secure_values())
+        self.assertEqual(self.editor.prepared_secure[a.id],'persisted-dummy')
+        self.editor.prepared_secure.clear()
+        self.editor.forget_secure_value()
+        self.assertNotIn(a.id,saved)
 
     def test_dock_minimizes_to_taskbar_proxy(self):
         dock=self.editor.dock
