@@ -578,8 +578,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         dlg.apply_all.setChecked(True)
         self.assertFalse(dlg.inputs[names[1][0]].isEnabled())
         self.assertTrue(dlg.remember[names[0][0]].isChecked())
+        from PySide6.QtWidgets import QDialog
         dlg._confirm()
-        self.assertEqual(dlg.result(),dlg.Accepted)
+        self.assertEqual(dlg.result(),QDialog.Accepted)
         self.assertEqual(dlg.submitted(),[
             (names[0][0],'same-dummy-secret',True),
             (names[1][0],'same-dummy-secret',True),
