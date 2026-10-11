@@ -69,7 +69,12 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertTrue(self.editor.inspector_title.isVisible())
         QTest.mouseClick(self.editor.inspector_title,Qt.LeftButton)
         self.assertEqual(self.editor._rows(),[0])
+        # Renaming the workflow is a real editable input, not blank space.
         QTest.mouseClick(self.editor.name,Qt.LeftButton)
+        self.assertEqual(self.editor._rows(),[0])
+        from PySide6.QtCore import QPoint
+        blank=QPoint(2,self.editor.inspector_panel.height()//2)
+        QTest.mouseClick(self.editor.inspector_panel,Qt.LeftButton,pos=blank)
         self.assertEqual(self.editor._rows(),[])
 
 
@@ -197,17 +202,26 @@ class EditorWaitSmokeTests(unittest.TestCase):
         flag=SimpleNamespace(is_set=lambda:False)
         self.editor.player=SimpleNamespace(isRunning=lambda:True,
                                             awaiting_secure_input=False,
-                                            pause_flag=flag)
-        self.editor.last_playback_step=1
-        self.editor.dock.sync()
-        self.assertTrue(self.editor.dock.step_status.isVisible())
-        self.assertIn('STEP 002/003',self.editor.dock.step_status.toolTip())
-        self.assertIn('WAIT 3.0s',self.editor.dock.step_status.toolTip())
-        self.editor.last_playback_step=2
-        self.editor.dock.sync()
-        self.assertIn('TYPE (11 chars)',self.editor.dock.step_status.toolTip())
-        self.assertNotIn('secret-data',self.editor.dock.step_status.toolTip())
-        self.editor.player=None
+                                            pause_flag=flag,
+                                            paused_at=0,
+                                            pause_accumulated=0,
+                                            cancel=lambda:None,
+                                            wait=lambda _ms:None)
+        try:
+            self.editor.dock.show()
+            self.editor.last_playback_step=1
+            self.editor.dock.sync()
+            self.qt.processEvents()
+            self.assertTrue(self.editor.dock.step_status.isVisible())
+            self.assertIn('STEP 002/003',self.editor.dock.step_status.toolTip())
+            self.assertIn('WAIT 3.0s',self.editor.dock.step_status.toolTip())
+            self.editor.last_playback_step=2
+            self.editor.dock.sync()
+            self.assertIn('TYPE (11 chars)',self.editor.dock.step_status.toolTip())
+            self.assertNotIn('secret-data',self.editor.dock.step_status.toolTip())
+        finally:
+            self.editor.player=None
+            self.editor.dock.hide()
 
 if __name__=='__main__':
     unittest.main()
