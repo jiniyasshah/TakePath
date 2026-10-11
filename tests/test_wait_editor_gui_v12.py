@@ -261,7 +261,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.assertTrue(review[0].parentWidget() is not None)
         self.assertGreater(self.editor.secret_edit.width(),80)
         hints=[l for l in self.editor.secure_container.findChildren(QLabel)
-               if 'They never go in project JSON' in l.text()]
+               if 'encrypted whenever you Save or Export' in l.text()]
         self.assertEqual(len(hints),1)
         self.assertTrue(hints[0].wordWrap())
         # The text field and checkboxes must fit the 320px inspector viewport.
