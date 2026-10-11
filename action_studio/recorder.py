@@ -76,6 +76,19 @@ class Recorder(QObject):
         self.scope = "window"
         self.own_hwnd = 0
         self.recorded_window_bounds = []
+        self.interactive_bounds = None  # Physical desktop rectangle of clickable dock controls
+        self.excluded_buttons = set()    # Suppress a complete control-button gesture
+
+    def set_interactive_bounds(self, rect):
+        """Update hit test rectangle from Qt GUI thread; no QWidget calls in hooks."""
+        self.interactive_bounds = (tuple(rect) if rect and len(rect) == 4 else None)
+
+    def _over_interactive_controls(self, x, y):
+        rect = self.interactive_bounds
+        if rect is None:
+            return False
+        left, top, width, height = rect
+        return left <= x < left + width and top <= y < top + height
 
     def begin(self, own_hwnd: int, target_hwnd: int = 0, scope: str = "window", capture_bounds=None, dock_bounds=None) -> bool:
         ok, reason = supported()
@@ -105,6 +118,7 @@ class Recorder(QObject):
         self.builder = ActionBuilder()
         self.modifiers.clear()
         self.pressed_keys.clear()
+        self.excluded_buttons.clear()
         try:
             from pynput import mouse, keyboard
             self.active = True
@@ -147,16 +161,20 @@ class Recorder(QObject):
     def _inside_at(self, x, y):
         if not self._inside():
             return False
-        # An always-on-top non-activating dock leaves the captured application
-        # foreground. Suppress pointer events over our controls explicitly.
-        if self.own_hwnd:
-            try:
-                a, b, w, h = (self.dock_bounds if sys.platform != 'win32' and self.dock_bounds
-                              else window_rect(self.own_hwnd))
-                if a <= x < a + w and b <= y < b + h:
+        # Windows' status dock is click-through; do NOT exclude its
+        # entire rectangle or Brave address-bar clicks would be lost.
+        # Only the separate interactive controller must be excluded.
+        if sys.platform == 'win32':
+            if self._over_interactive_controls(x, y):
+                return False
+            if self.excluded_buttons:
+                return False  # A control drag may travel beyond its bounds.
+        elif self.own_hwnd:
+            # Other platforms keep their existing regular interactive dock.
+            if self.dock_bounds:
+                left, top, width, height = self.dock_bounds
+                if left <= x < left + width and top <= y < top + height:
                     return False
-            except OSError:
-                pass
         if self.scope == 'screen':
             l,t,w,h=self.bounds
             return l<=x<l+w and t<=y<t+h
@@ -196,6 +214,18 @@ class Recorder(QObject):
         value = str(button).split('.')[-1]
         if value not in {"left", "right", "middle", "x1", "x2"}:
             return
+        # Track controller button presses until release even if the user drags
+        # the handle outside the control window. They must not appear in take.
+        if sys.platform == 'win32':
+            if pressed and self._over_interactive_controls(x, y):
+                with self.lock:
+                    self.excluded_buttons.add(value)
+                return
+            if value in self.excluded_buttons:
+                if not pressed:
+                    with self.lock:
+                        self.excluded_buttons.discard(value)
+                return
         if not self._inside_at(x, y):
             if not pressed and self.builder is not None:
                 with self.lock:
