@@ -570,5 +570,96 @@ class EditorWaitSmokeTests(unittest.TestCase):
             dock.hide()
 
 
+    def test_secure_preflight_explicitly_reuses_first_value(self):
+        from action_studio.ui import SecurePreflightDialog
+        names=[('a'*32,'First secure step'),('b'*32,'Second secure step')]
+        dlg=SecurePreflightDialog(names,self.editor,allow_save=True)
+        dlg.inputs[names[0][0]].setText('same-dummy-secret')
+        dlg.apply_all.setChecked(True)
+        self.assertFalse(dlg.inputs[names[1][0]].isEnabled())
+        self.assertTrue(dlg.remember[names[0][0]].isChecked())
+        dlg._confirm()
+        self.assertEqual(dlg.result(),dlg.Accepted)
+        self.assertEqual(dlg.submitted(),[
+            (names[0][0],'same-dummy-secret',True),
+            (names[1][0],'same-dummy-secret',True),
+        ])
+        dlg.close()
+
+    def test_secure_inspector_apply_all_stores_one_shared_reference(self):
+        from types import SimpleNamespace
+        from action_studio.core import Project
+        values={}
+        fake=SimpleNamespace(
+            set=lambda ref,value:values.__setitem__(ref,value),
+            get=lambda ref:values.get(ref),
+            delete=lambda ref:values.pop(ref,None))
+        self.editor.credential_store=fake
+        a=self.Action(kind='secure_input',secure_mode='auto')
+        b=self.Action(kind='secure_input',secure_mode='auto')
+        self.editor.project=Project(actions=[a,b])
+        self.editor.refresh({a.id})
+        self.editor.secret_edit.setText('shared-dummy-passphrase')
+        self.editor.secret_remember.setChecked(True)
+        self.editor.secret_apply_all.setChecked(True)
+        self.editor.set_secure_value()
+        self.assertEqual(a.secure_ref,b.secure_ref)
+        self.assertEqual(values[a.secure_ref],'shared-dummy-passphrase')
+        self.assertEqual(len(values),1)
+        self.assertNotIn('shared-dummy-passphrase',str(self.editor.project.to_dict()))
+        # Editing one item later must not overwrite the still-shared value.
+        self.editor.refresh({a.id})
+        self.editor.secret_edit.setText('different-dummy-passphrase')
+        self.editor.secret_apply_all.setChecked(False)
+        self.editor.set_secure_value()
+        self.assertNotEqual(a.secure_ref,b.secure_ref)
+        self.assertEqual(values[b.secure_ref],'shared-dummy-passphrase')
+
+    def test_dock_minimizes_to_taskbar_proxy(self):
+        dock=self.editor.dock
+        dock.show()
+        self.qt.processEvents()
+        dock.minimize_to_taskbar()
+        self.qt.processEvents()
+        self.assertTrue(self.editor._dock_taskbar_minimized)
+        self.assertFalse(dock.isVisible())
+        self.assertTrue(self.editor.isMinimized())
+        self.editor.showNormal()
+        self.qt.processEvents()
+        from PySide6.QtTest import QTest
+        QTest.qWait(40)
+        self.assertFalse(self.editor._dock_taskbar_minimized)
+        self.assertTrue(dock.isVisible())
+        dock.hide()
+
+    def test_compact_dock_retains_combined_center_on_resize(self):
+        from PySide6.QtTest import QTest
+        from unittest.mock import patch
+        dock=self.editor.dock
+        old=dock.compact_active
+        try:
+            with patch.object(dock,'_avoid_stealing_focus'), \
+                 patch('action_studio.ui.window_rect',return_value=[400,20,116,64]):
+                dock.show()
+                dock.move(100,120)
+                self.editor.recorder.active=True
+                dock.set_compact_mode(True)
+                dock.sync()
+                QTest.qWait(300)
+                compact_center=dock.x()+(dock.width()+dock.control_island.width())/2
+                compact_y=dock.y()+dock.height()/2
+                dock.set_compact_mode(False)
+                QTest.qWait(300)
+                self.assertAlmostEqual(dock.x()+(dock.width()+dock.control_island.width())/2,
+                                       compact_center,delta=2)
+                self.assertAlmostEqual(dock.y()+dock.height()/2,compact_y,delta=2)
+                self.assertEqual(dock.grip_overlay.x(),dock.x()+8)
+        finally:
+            self.editor.recorder.active=False
+            dock.sync()
+            dock.set_compact_mode(old)
+            dock.hide()
+
+
 if __name__=='__main__':
     unittest.main()
