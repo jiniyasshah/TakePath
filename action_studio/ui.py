@@ -45,6 +45,13 @@ QWidget { background: #0B0D12; color: #EDF0F7; font-size: 12px; }
 QLabel { background: transparent; }
 QMainWindow, QDialog { background: #0B0D12; }
 QFrame#dockBody { background: #12141C; border: 1px solid #2B303D; border-radius: 23px; }
+/* Separate hit-test surfaces meet at one seam, without two rounded inner ends. */
+QFrame#dockBodyJoinedLeft { background: #12141C; border: 1px solid #2B303D;
+  border-right: 0px; border-top-left-radius: 23px; border-bottom-left-radius: 23px;
+  border-top-right-radius: 0px; border-bottom-right-radius: 0px; }
+QFrame#dockBodyJoinedRight { background: #12141C; border: 1px solid #2B303D;
+  border-left: 0px; border-top-left-radius: 0px; border-bottom-left-radius: 0px;
+  border-top-right-radius: 23px; border-bottom-right-radius: 23px; }
 QWidget#dockPage, QStackedWidget#dockStack { background: transparent; }
 QWidget#propertyGroup, QWidget#inspectorHolder { background: transparent; }
 QFrame#topBar { background: #10131A; border-bottom: 1px solid #252B37; }
@@ -105,6 +112,14 @@ QPushButton#replayOrb:hover { background: #7897FF; border-color: #9FB3FF; }
 QPushButton#stopOrb { border: 0; border-radius: 23px; background: #F43C66;
  min-width: 46px; max-width: 46px; min-height: 46px; max-height: 46px; padding: 0; }
 QPushButton#stopOrb:hover { background: #FF547A; }
+QFrame#dockBodyJoinedRight QPushButton#dockIcon {
+  min-width: 28px; max-width: 28px; min-height: 34px; max-height: 34px;
+  padding: 0px; background: transparent; border: 1px solid transparent; border-radius: 9px;
+}
+QFrame#dockBodyJoinedRight QPushButton#dockIcon:hover { background: #252D3A; }
+QFrame#dockBodyJoinedRight QPushButton#stopOrb {
+  min-width: 42px; max-width: 42px; min-height: 42px; max-height: 42px;
+  border-radius: 21px; padding: 0px; }
 QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
   background: #1B202B; border: 1px solid #313A4A; border-radius: 9px;
   padding: 7px 10px; selection-background-color: #536EB1; }
@@ -688,24 +703,30 @@ class DockControlIsland(QWidget):
         self.setObjectName('dockControlIsland')
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self.setFixedSize(196, 64)
-        layout=V(self,(3,3,3,3),0)
-        frame=F('dockBody')
+        # Keep the independent clickable HWND; eliminate its outer gap.
+        self.setFixedSize(146, 64)
+        layout=V(self,(0,0,0,0),0)
+        frame=F('dockBodyJoinedRight')
+        self.frame=frame
         layout.addWidget(frame)
-        actions=H(frame,(6,1,6,1),4)
+        actions=H(frame,(5,1,5,1),2)
         self.drag_handle=DockDragHandle(dock)
+        self.drag_handle.setFixedSize(28,34)
         self.drag_handle.setToolTip('Drag here to move the recording dock')
         actions.addWidget(self.drag_handle)
         self.pause=icon_button('pause',dock.owner.toggle_pause,'Pause or resume (F7)')
         self.pause.setAccessibleName('Pause or resume recording or replay')
+        self.pause.setFixedSize(28,34)
         actions.addWidget(self.pause)
         self.stop=icon_button('stop',dock.owner.stop,'Stop recording or replay (F8)',
                               'stopOrb','#FFFFFF',20)
         self.stop.setAccessibleName('Stop recording or replay')
+        self.stop.setFixedSize(42,42)
         actions.addWidget(self.stop)
         self.compact=icon_button('minus',lambda:dock.set_compact_mode(not dock.compact_active),
                                   'Toggle compact recording dock')
         self.compact.setAccessibleName('Toggle compact dock')
+        self.compact.setFixedSize(28,34)
         actions.addWidget(self.compact)
         self._excluded_from_capture=False
 
@@ -757,9 +778,12 @@ class ControlDock(QWidget):
         self.compact_active = str(owner.settings.value('dock_short_while_active','true')).lower() == 'true'
         self.control_island = None
         root=V(self,(10,7,10,9),0)
+        self.root_layout=root
         body=F('dockBody')
+        self.body=body
         root.addWidget(body,1)
         shadow=QGraphicsDropShadowEffect(body)
+        self.dock_shadow=shadow
         shadow.setBlurRadius(46)
         shadow.setOffset(0,11)
         shadow.setColor(QColor(0,0,0,171))
@@ -844,14 +868,14 @@ class ControlDock(QWidget):
 
         active=QWidget()
         active.setObjectName('dockPage')
-        row=H(active,(0,0,0,0),9)
+        row=H(active,(0,0,0,0),4)
         self.active_handle=DockDragHandle(self)
         row.addWidget(self.active_handle)
         self.mode_status=L('●  REC','recIndicator')
-        self.mode_status.setMinimumWidth(84)
+        self.mode_status.setMinimumWidth(80)
         row.addWidget(self.mode_status)
         self.clock=L('00:00','recordClock')
-        self.clock.setMinimumWidth(78)
+        self.clock.setMinimumWidth(64)
         row.addWidget(self.clock)
         self.step_status=L('','muted')
         self.step_status.setFixedWidth(230)
@@ -1036,7 +1060,7 @@ class ControlDock(QWidget):
         active=isinstance(getattr(self,'control_island',None),DockControlIsland) and (
             self.owner.recorder.active or
             bool(self.owner.player and self.owner.player.isRunning()))
-        extra=(self.control_island.width()-8) if active else 0
+        extra=self.control_island.width() if active else 0
         visual_width=self.width()+extra
         # Previous releases called bottom-center "center". Starting with V4,
         # that alias means the requested top-centered placement.
@@ -1050,7 +1074,7 @@ class ControlDock(QWidget):
         if location!='custom':
             x=(screen.left()+margin if location=='top-left' else
                screen.right()-visual_width-margin if location=='top-right' else
-               screen.center().x()-self.width()//2)
+               screen.left()+(screen.width()-visual_width)//2)
             y=screen.bottom()-self.height()-margin if location=='bottom' else screen.top()+margin
         self.move(x,y)
         if not initially:
@@ -1073,10 +1097,8 @@ class ControlDock(QWidget):
             self.owner.recorder.set_interactive_bounds(None)
             return
         island.update_controls(paused, self.compact_active)
-        # Dock and island are adjacent, making one intentionally short strip
-        # instead of stacking controls on top of a long empty status bar.
-        point=QPoint(self.x()+self.width()-8,
-                     self.y()+(self.height()-island.height())//2)
+        # One visual capsule, but separate click-through and clickable HWNDs.
+        point=QPoint(self.x()+self.width(), self.y())
         if island.pos()!=point:
             island.move(point)
         if not island.isVisible():
@@ -1163,14 +1185,22 @@ class ControlDock(QWidget):
         pending=self.owner.timer.isActive() or bool(self.owner.pending_mode)
         busy=recording or playing or pending
         island_active=bool(self.control_island and (recording or playing))
-        # Compact mode is only used while the separate controller is active.
-        # Leave the full-size dock unchanged for idle and countdown.
-        # Automatically shrink for both recording and replay. The compact
-        # status is small and the interactive controller sits next to it.
-        # Preserve custom dock placement when switching size.
-        desired_width=(332 if playing else 238) if island_active and self.compact_active else 846
-        if self.width()!=desired_width:
-            self.setFixedSize(desired_width,84)
+        # The status HWND passes mouse clicks through; the adjoining control
+        # HWND handles Pause/Stop and dragging. Both PAINT as one short pill.
+        # Idle and countdown retain the original full dock and its shadow.
+        desired_width=(250 if playing else 174) if island_active and self.compact_active else 846
+        desired_height=64 if island_active else 84
+        self.root_layout.setContentsMargins(
+            *((0,0,0,0) if island_active else (10,7,10,9)))
+        self.dock_shadow.setEnabled(not island_active)
+        body_role='dockBodyJoinedLeft' if island_active else 'dockBody'
+        if self.body.objectName()!=body_role:
+            self.body.setObjectName(body_role)
+            self.body.style().unpolish(self.body)
+            self.body.style().polish(self.body)
+            self.body.update()
+        if self.size()!=QSize(desired_width,desired_height):
+            self.setFixedSize(desired_width,desired_height)
             location=str(self.owner.settings.value('dock_location','top'))
             if location!='custom':
                 self.place(location,initially=True)
@@ -1180,7 +1210,7 @@ class ControlDock(QWidget):
         for widget in (self.active_handle,self.pause,self.stop,self.active_separator,
                        self.active_minimize,self.active_close):
             widget.setVisible(not island_active)
-        self.step_status.setFixedWidth(145 if island_active and self.compact_active else 230)
+        self.step_status.setFixedWidth(148 if island_active and self.compact_active else 230)
         self.clock.setVisible(not (island_active and playing and self.compact_active))
         ready = self.owner.replay_ready and not busy
         self.primary_stack.setCurrentIndex(1 if ready else 0)
