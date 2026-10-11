@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo
+from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QImage, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
@@ -27,6 +27,7 @@ from .core import Action, Project, interpolate_path, load_project, save_project,
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
+from .portable_secrets import encrypt_secret_bundle, decrypt_secret_bundle, PortableSecretError
 from .targets import open_windows, usable_window, screen_entries, window_menu_label
 from .platform_api import (foreground as platform_foreground, window_pid, is_ours as platform_is_ours,
                            activate_target_window as platform_activate, center_cursor as platform_center,
@@ -672,6 +673,8 @@ class DockDragHandle(QPushButton):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if hasattr(self.dock,'_dock_geometry_animation'):
+                self.dock._dock_geometry_animation.stop()
             self.offset = event.globalPosition().toPoint() - self.dock.pos()
             event.accept()
         else:
@@ -823,6 +826,10 @@ class ControlDock(QWidget):
         self.compact_active = str(owner.settings.value('dock_short_while_active','true')).lower() == 'true'
         self.control_island = None
         self.grip_overlay = None
+        self._dock_geometry_animation=QPropertyAnimation(self,b'geometry',self)
+        self._dock_geometry_animation.setDuration(245)
+        self._dock_geometry_animation.setEasingCurve(QEasingCurve.InOutCubic)
+        self._target_dimensions=(846,84)
         root=V(self,(10,7,10,9),0)
         self.root_layout=root
         body=F('dockBody')
@@ -908,7 +915,7 @@ class ControlDock(QWidget):
         row.addWidget(self.edit_dock)
         self.more=icon_button('dots',self.show_more,'More options')
         row.addWidget(self.more)
-        row.addWidget(icon_button('minus',self.minimize_to_tray,'Minimize to notification area'))
+        row.addWidget(icon_button('minus',self.minimize_to_taskbar,'Minimize to taskbar'))
         row.addWidget(icon_button('close',self.close,'Close TakePath'))
         self.stack.addWidget(idle)
 
@@ -949,7 +956,7 @@ class ControlDock(QWidget):
         row.addStretch(1)
         self.active_separator=self._separator()
         row.addWidget(self.active_separator)
-        self.active_minimize=icon_button('minus',self.minimize_to_tray,'Minimize to notification area')
+        self.active_minimize=icon_button('minus',self.minimize_to_taskbar,'Minimize to taskbar')
         self.active_close=icon_button('close',self.close,'Stop and close')
         row.addWidget(self.active_minimize)
         row.addWidget(self.active_close)
@@ -1105,6 +1112,7 @@ class ControlDock(QWidget):
         menu.exec(self.more.mapToGlobal(QPoint(0,self.more.height()+6)))
 
     def place(self, location='top', initially=False):
+        self._dock_geometry_animation.stop()
         screen=QGuiApplication.primaryScreen().availableGeometry()
         margin=18
         # Include the separate clickable controller in position calculations.
@@ -1179,9 +1187,36 @@ class ControlDock(QWidget):
 
     def moveEvent(self,event):
         super().moveEvent(event)
+        self._reposition_active_controls()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        self._reposition_active_controls()
+
+    def _reposition_active_controls(self):
         if self.control_island is not None and self.control_island.isVisible():
             self._sync_control_island(True, self.owner.recorder.paused or
                 bool(self.owner.player and self.owner.player.pause_flag.is_set()))
+
+    def _transition_dock_geometry(self, width, height, active):
+        """Animate about the existing combined dock center, never the screen center."""
+        previous_total=self.width()+(
+            self.control_island.width() if self.control_island is not None
+            and self.control_island.isVisible() else 0)
+        center_x=self.x()+previous_total/2
+        center_y=self.y()+self.height()/2
+        new_total=width+(self.control_island.width() if active and self.control_island else 0)
+        goal=QRect(round(center_x-new_total/2),round(center_y-height/2),width,height)
+        self._target_dimensions=(width,height)
+        self._dock_geometry_animation.stop()
+        self.setMinimumSize(0,0)
+        self.setMaximumSize(16777215,16777215)
+        if not self.isVisible():
+            self.setGeometry(goal)
+            return
+        self._dock_geometry_animation.setStartValue(self.geometry())
+        self._dock_geometry_animation.setEndValue(goal)
+        self._dock_geometry_animation.start()
 
     def hideEvent(self,event):
         if self.control_island is not None:
@@ -1191,15 +1226,9 @@ class ControlDock(QWidget):
             self.owner.recorder.set_interactive_bounds(None)
         super().hideEvent(event)
 
-    def minimize_to_tray(self):
-        if self.owner.tray and self.owner.tray.isVisible():
-            self.hide()
-            self.owner.tray.showMessage('TakePath','Recording controls are available from the tray icon.',QSystemTrayIcon.Information,1800)
-        else:
-            # Always leave a visible way back if the OS has no system tray.
-            if not self.owner.busy():
-                self.owner.show_editor()
-                self.owner.showMinimized()
+    def minimize_to_taskbar(self):
+        """Minimize through the editor's ordinary taskbar window."""
+        self.owner.minimize_dock_to_taskbar()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1267,11 +1296,8 @@ class ControlDock(QWidget):
             self.body.style().unpolish(self.body)
             self.body.style().polish(self.body)
             self.body.update()
-        if self.size()!=QSize(desired_width,desired_height):
-            self.setFixedSize(desired_width,desired_height)
-            location=str(self.owner.settings.value('dock_location','top'))
-            if location!='custom':
-                self.place(location,initially=True)
+        if self._target_dimensions!=(desired_width,desired_height):
+            self._transition_dock_geometry(desired_width,desired_height,island_active)
         self.stack.setCurrentIndex(1 if busy else 0)
         self.retake_button.setVisible(bool(self.owner.project.actions) and not busy)
         self.active_retake.setVisible(recording and not island_active)
@@ -1564,6 +1590,7 @@ class MainWindow(QMainWindow):
         self.is_dirty=False
         self.session_secrets={}  # memory-only; not written into projects / settings
         self.prepared_secure={}
+        self._dock_taskbar_minimized=False
         try:
             self.credential_store=credential_store()
         except CredentialError:
@@ -2774,8 +2801,30 @@ class MainWindow(QMainWindow):
         self.project_path=Path(path)
         return self.save()
 
+    def minimize_dock_to_taskbar(self):
+        """Show a real Windows taskbar entry instead of hiding in the tray."""
+        self._dock_taskbar_minimized=True
+        self.dock.hide()
+        self.setWindowTitle(f'TakePath {__version__} · Recorder')
+        self.showMinimized()
+
+    def changeEvent(self,event):
+        super().changeEvent(event)
+        if (event.type()==QEvent.WindowStateChange and
+                self._dock_taskbar_minimized and not self.isMinimized()):
+            QTimer.singleShot(0,self._restore_minimized_dock)
+
+    def _restore_minimized_dock(self):
+        if not self._dock_taskbar_minimized:return
+        self._dock_taskbar_minimized=False
+        self.setWindowTitle(f'TakePath {__version__}')
+        self.hide()
+        self.dock.show()
+        self.dock.sync()
+
     def show_editor(self):
         if self.busy():return
+        self._dock_taskbar_minimized=False
         self.replay_ready=False
         self.prepared_secure.clear()
         self.showMaximized()
@@ -2784,6 +2833,7 @@ class MainWindow(QMainWindow):
         self.dock.hide()
 
     def show_dock(self):
+        self._dock_taskbar_minimized=False
         self.dock.show()
         self.hide()
         self.dock.raise_()
