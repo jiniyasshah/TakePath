@@ -690,6 +690,7 @@ class ControlDock(QWidget):
         if self.target_mode not in ('window','screen'):
             self.target_mode = 'window'
         self._no_activate = False
+        self._pointer_passthrough = False
         self._capture_exclusion_attempted = False
         root=V(self,(10,7,10,9),0)
         body=F('dockBody')
@@ -990,16 +991,39 @@ class ControlDock(QWidget):
             except Exception:
                 pass
 
-    def _avoid_stealing_focus(self, active):
-        if sys.platform != 'win32' or active == self._no_activate:
+    def _avoid_stealing_focus(self, active, pointer_passthrough=False):
+        """Make active recording/replay dock visible but transparent to mouse.
+
+        On Windows a translucent layered window needs WS_EX_TRANSPARENT
+        for clicks to reach the underlying browser (e.g. URL bar).
+        F7/F8 remain global pause/stop controls while click-through is on.
+        Never intercept a click just because the overlay crosses a target.
+        """
+        if sys.platform != 'win32':
+            return
+        desired=bool(pointer_passthrough)
+        if active == self._no_activate and desired == getattr(self,'_pointer_passthrough',False):
             return
         try:
             hwnd=int(self.winId())
             user32=ctypes.windll.user32
             flags=user32.GetWindowLongW(hwnd,-20)
             noactivate=0x08000000
-            user32.SetWindowLongW(hwnd,-20,flags | noactivate if active else flags & ~noactivate)
+            transparent=0x00000020
+            layered=0x00080000
+            updated=flags | noactivate if active else flags & ~noactivate
+            if desired:
+                updated |= transparent | layered
+            else:
+                updated &= ~transparent
+            if updated != flags:
+                user32.SetWindowLongW(hwnd,-20,updated)
+                # Tell Windows to update hit-testing after extended styles
+                # change; do not move or foreground the overlay.
+                user32.SetWindowPos(hwnd,0,0,0,0,0,
+                                   0x0001|0x0002|0x0004|0x0010|0x0020)
             self._no_activate=active
+            self._pointer_passthrough=desired
         except Exception:
             pass
 
@@ -1034,7 +1058,8 @@ class ControlDock(QWidget):
                 self.step_status.setText('Preparing replay…')
                 self.step_status.setToolTip('Waiting for the first action')
         self.pause.setToolTip('Continue after manual input (F7)' if waiting else 'Pause / resume (F7)')
-        self._avoid_stealing_focus(busy or ready)
+        self._avoid_stealing_focus(busy or ready, pointer_passthrough=recording or playing)
+        self.stop.setToolTip("Use F8 to stop while recording or replaying; mouse clicks pass through the dock" if (recording or playing) else "Stop (F8)")
         self.stop.setIcon(vector_icon('close','#FFFFFF') if pending else vector_icon('stop','#FFFFFF'))
         self.pause.setEnabled(recording or playing)
         if recording:
@@ -1054,7 +1079,8 @@ class ControlDock(QWidget):
             self.mode_status.setStyleSheet('color:#A2A9FF; font-weight:750;')
         if pending and not (recording or playing):
             self.clock.setText(str(self.owner.left_count))
-        self.stop.setToolTip('Cancel countdown' if pending else 'Stop (F8)')
+        if not (recording or playing):
+            self.stop.setToolTip('Cancel countdown' if pending else 'Stop (F8)')
 
     def closeEvent(self,event):
         if self.owner.busy():
