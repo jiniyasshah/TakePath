@@ -1717,10 +1717,36 @@ class MainWindow(QMainWindow):
             return area.rect().contains(local)
         return False
 
+    def _inspector_field_hit(self, obj, event):
+        # Preserve the selected action for ALL inspector interactions:
+        # timing spinboxes, their nested line edits/arrows, checkboxes,
+        # combos, text editors, sliders, scroll bars, and readable labels.
+        # Checking just the receiver's geometry is not enough when Qt
+        # propagates a child press to its parent widget.
+        interactive=(QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit,
+                     QTextEdit, QAbstractItemView, QScrollBar, QLabel)
+        def field_or_label(widget):
+            while widget is not None and widget is not self.inspector_panel:
+                if isinstance(widget, interactive):
+                    return True
+                widget=widget.parentWidget()
+            return False
+        if self._inside_widget(obj, self.inspector_panel) and field_or_label(obj):
+            return True
+        global_point=event.globalPosition().toPoint()
+        hit=QApplication.widgetAt(global_point)
+        if hit is not None and self._inside_widget(hit, self.inspector_panel):
+            return field_or_label(hit)
+        inside=self.inspector_panel.mapFromGlobal(global_point)
+        if self.inspector_panel.rect().contains(inside):
+            return field_or_label(self.inspector_panel.childAt(inside))
+        return False
+
     def eventFilter(self, obj, event):
-        # Ignore the dock, popups, dialogs and windows other than the editor.
-        # Do not steal selection from inspector fields or timeline commands
-        # because those widgets operate on the current selection.
+        # Deselect only on actual empty editor space, never on an
+        # inspector field or the controls used to change selected actions.
+        # The mouse press target is checked instead of treating the entire
+        # inspector as a protected blank surface.
         if (event.type() == QEvent.MouseButtonPress and
                 isinstance(obj, QWidget) and self.isVisible() and
                 hasattr(self, 'table') and self._rows() and
@@ -1731,9 +1757,13 @@ class MainWindow(QMainWindow):
                 if viewport.rect().contains(point) and not self.table.indexAt(point).isValid():
                     self.clear_action_selection()
                 return super().eventFilter(obj,event)
-            protected=[self.inspector_panel, self.add_action_button,
-                       self.before_action_button, self.rail_add_button,
-                       self.rail_delete_button, self.canvas]
+            if self._click_within(obj, self.inspector_panel, event):
+                if not self._inspector_field_hit(obj, event):
+                    self.clear_action_selection()
+                return super().eventFilter(obj,event)
+            protected=[self.add_action_button, self.before_action_button,
+                       self.rail_add_button, self.rail_delete_button,
+                       self.canvas]
             protected.extend(self.action_operation_buttons)
             if not any(self._click_within(obj,w,event) for w in protected):
                 self.clear_action_selection()
