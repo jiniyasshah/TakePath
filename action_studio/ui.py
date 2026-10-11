@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QImage, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
@@ -720,7 +720,7 @@ class DockDragHandle(QPushButton):
         if event.button() == Qt.LeftButton:
             if hasattr(self.dock,'_dock_geometry_animation'):
                 animation=self.dock._dock_geometry_animation
-                if animation.state()==QPropertyAnimation.Running:
+                if animation.state()==QAbstractAnimation.State.Running:
                     animation.setCurrentTime(animation.duration())
                     animation.stop()
             self.offset = event.globalPosition().toPoint() - self.dock.pos()
@@ -1160,7 +1160,7 @@ class ControlDock(QWidget):
         menu.exec(self.more.mapToGlobal(QPoint(0,self.more.height()+6)))
 
     def place(self, location='top', initially=False):
-        if self._dock_geometry_animation.state()==QPropertyAnimation.Running:
+        if self._dock_geometry_animation.state()==QAbstractAnimation.State.Running:
             self._dock_geometry_animation.setCurrentTime(
                 self._dock_geometry_animation.duration())
             self._dock_geometry_animation.stop()
