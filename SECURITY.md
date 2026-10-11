@@ -2,7 +2,7 @@
 
 TakePath works with the real keyboard/mouse and may interact with sensitive applications. Use only on systems and apps you control or have permission to automate.
 
-**Secure input:** Recognized password fields are represented by protected markers. Optional credentials are stored in Windows Credential Manager under the current Windows user, or in session memory. Project JSON files must never contain those passwords. An untrusted workflow may direct credential input to an unintended app or field; verify the target before replay.
+**Secure input:** Recognized password fields are represented by protected markers. Configured secure values may be kept in the OS credential vault or in memory, and are also stored inside the authenticated encrypted project payload when you Save/Export. No project data, passwords, or encryption keys appear as plaintext in new on-disk project envelopes. The project encryption key is random and stored under the local OS account by Windows Credential Manager/macOS Keychain/Linux Secret Service; files cannot automatically move to a different device/profile without the original protected key. Saving fails closed if the supported system credential vault is unavailable. An untrusted workflow may direct credential input to an unintended app or field; verify the target before replay.
 
 **Input capture:** Start and stop recording explicitly; the UI displays a visible recording state. F8 stops. Input hooks and UI Automation support vary by app and privilege level.
 
