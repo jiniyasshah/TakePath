@@ -41,7 +41,7 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 ### Smarter replay (1.2.0 beta)
 
 - **Adaptive wait:** optionally let TakePath pause briefly after clicks and navigation while visible changes settle. This is best-effort; complex or very slow pages may still need a manual Wait step.
-- **Editable Wait steps:** add a checkpoint for a window title, focused field, or Windows UI Automation control, with a configurable timeout.
+- **Editable Wait steps:** choose a **fixed-duration pause** (useful for holding a screen during recording) or a conditional checkpoint for a window title, focused field, or Windows UI Automation control. The fixed pause defaults to three seconds; conditional steps have a configurable timeout.
 - **Window-relative coordinates:** newly recorded window-scoped projects adjust click and drag locations when the target window moves or moderately resizes. Major layout changes can still break alignment.
 - **Safer focus handling:** if a window-scoped replay loses focus, TakePath waits briefly for the original target and stops instead of typing elsewhere.
 - **More reliable input capture:** improved overlapping mouse buttons and held-key repeats.
@@ -60,6 +60,7 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 - Correct captured text and customize typing behavior.
 - Select one or multiple actions to delete, duplicate, or reorder.
 - Tune individual delays and apply timing changes across selected steps.
+- Use **+ Before** to insert a new action before the selected step, or at the beginning if no step is selected. Click blank editor space to deselect; property controls retain selection so you can edit safely.
 - Show a visual action map when you need to inspect or adjust click positions; hide it to focus on the action list.
 - Save and reopen editable `.vas.json` projects.
 - Previously saved projects continue to open; projects without recorded window bounds retain their previous screen-coordinate behavior.
