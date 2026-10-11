@@ -63,8 +63,18 @@ class EditorWaitSmokeTests(unittest.TestCase):
         self.editor.table.selectRow(0)
         self.qt.processEvents()
         self.assertEqual(self.editor._rows(),[0])
+        calls=[]
+        original_clear=self.editor.clear_action_selection
+        def trace_clear():
+            calls.append('application click-away clear')
+            original_clear()
+        self.editor.clear_action_selection=trace_clear
         QTest.mouseClick(self.editor.delay,Qt.LeftButton)
-        self.assertEqual(self.editor._rows(),[0])
+        self.assertEqual(
+            self.editor._rows(),[0],
+            'After inspector click: clear calls='+repr(calls)+
+            '; inspector ancestor='+str(self.editor.inspector_panel.isAncestorOf(self.editor.delay))+
+            '; visible='+str(self.editor.delay.isVisible()))
         QTest.mouseClick(self.editor.name,Qt.LeftButton)
         self.assertEqual(self.editor._rows(),[])
 
