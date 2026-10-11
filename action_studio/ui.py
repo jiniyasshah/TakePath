@@ -1760,11 +1760,32 @@ class MainWindow(QMainWindow):
             return field_or_label(self.inspector_panel.childAt(inside))
         return False
 
+    def _editor_control_hit(self, obj, event):
+        """Identify real controls by cursor position, including nested inputs.
+
+        A click on the timing GapInput may be propagated to the toolbar or
+        even the main window; checking only the receiving widget caused the
+        selected action to be cleared while the user adjusted a setting.
+        """
+        interactive=(QAbstractButton, QAbstractSpinBox, QComboBox, QLineEdit,
+                     QTextEdit, QAbstractItemView, QScrollBar, QLabel)
+        # Use the actual widget at the mouse coordinates first, then the
+        # event receiver. All parents of nested line-edit/spin controls
+        # still count as interactions with an editing widget.
+        actual=QApplication.widgetAt(event.globalPosition().toPoint())
+        for source in (actual, obj):
+            widget=source
+            while isinstance(widget, QWidget) and widget is not self:
+                if isinstance(widget, interactive) and self._inside_widget(widget, self):
+                    return True
+                widget=widget.parentWidget()
+        return False
+
     def eventFilter(self, obj, event):
-        # Deselect only on actual empty editor space, never on an
-        # inspector field or the controls used to change selected actions.
-        # The mouse press target is checked instead of treating the entire
-        # inspector as a protected blank surface.
+        # Keep selection for every real editor control, including all
+        # bottom playback settings. Clear only on genuinely empty surfaces.
+        # Hit-testing actual mouse coordinates protects against Qt bubbling
+        # a child input event to its parent container.
         if (event.type() == QEvent.MouseButtonPress and
                 isinstance(obj, QWidget) and self.isVisible() and
                 hasattr(self, 'table') and self._rows() and
@@ -1778,6 +1799,12 @@ class MainWindow(QMainWindow):
             if self._click_within(obj, self.inspector_panel, event):
                 if not self._inspector_field_hit(obj, event):
                     self.clear_action_selection()
+                return super().eventFilter(obj,event)
+            if self._click_within(obj, self.toolbar_scroll, event):
+                if not self._editor_control_hit(obj, event):
+                    self.clear_action_selection()
+                return super().eventFilter(obj,event)
+            if self._editor_control_hit(obj, event):
                 return super().eventFilter(obj,event)
             protected=[self.add_action_button, self.before_action_button,
                        self.rail_add_button, self.rail_delete_button,
