@@ -16,6 +16,7 @@ MODES = {"original", "smooth", "straight", "gentle"}
 TEXT_MODES = {"human", "instant", "original", "smooth"}
 GLOBAL_TYPING_MODES = {"original", "smooth", "instant"}
 MOUSE_SPEED_MODES = {"normal", "fast", "slow", "instant"}
+ACTION_MOUSE_SPEED_MODES = MOUSE_SPEED_MODES | {"inherit"}
 MOUSE_SPEED_FACTORS = {"normal": 1.0, "fast": 0.3, "slow": 1.8, "instant": 0.0}
 SECURE_MODES = {"auto", "manual", "skip"}
 MAX_ACTIONS = 12000
@@ -54,6 +55,7 @@ class Action:
     dy: int = 0
     path_mode: str = "smooth"
     path_duration: float = 0.32
+    mouse_speed_override: str = "inherit"  # Pointer actions only; otherwise use project-wide speed.
     raw_path: list[list[float]] = field(default_factory=list)
     typing_mode: str = "human"
     char_delay: float = 0.055
@@ -83,6 +85,9 @@ class Action:
                 and not defaults.wait_value):
             defaults.wait_mode = "duration"
         defaults.path_duration = finite_range(defaults.path_duration, 0, 20)
+        defaults.mouse_speed_override = (defaults.mouse_speed_override
+            if isinstance(defaults.mouse_speed_override, str)
+            and defaults.mouse_speed_override in ACTION_MOUSE_SPEED_MODES else "inherit")
         defaults.char_delay = finite_range(defaults.char_delay, 0, 2)
         defaults.enabled = bool(defaults.enabled)
         defaults.id = str(defaults.id)[:80]
@@ -251,6 +256,19 @@ def format_replay_step(action: Action, index: int, total: int) -> str:
     else:
         detail = action.kind.upper()
     return f"STEP {index+1:03d}/{total:03d} · {detail}"
+
+
+def effective_mouse_speed(action: Action, project_speed: str) -> str:
+    """Resolve a pointer action's override, or use the project default.
+
+    Other action types never inherit overrides. Keep this independent of
+    typing speed, fixed Wait durations, and action pre-delays.
+    """
+    default = project_speed if project_speed in MOUSE_SPEED_MODES else "normal"
+    if action.kind not in {"click", "drag", "scroll"}:
+        return default
+    mode = action.mouse_speed_override
+    return mode if mode in MOUSE_SPEED_MODES else default
 
 
 def remove_actions(actions: list[Action], selected_ids: set[str]) -> list[Action]:
