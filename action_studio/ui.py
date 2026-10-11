@@ -754,7 +754,7 @@ class ControlDock(QWidget):
         self._no_activate = False
         self._pointer_passthrough = False
         self._capture_exclusion_attempted = False
-        self.compact_active = str(owner.settings.value('dock_compact_active','false')).lower() == 'true'
+        self.compact_active = str(owner.settings.value('dock_short_while_active','true')).lower() == 'true'
         self.control_island = None
         root=V(self,(10,7,10,9),0)
         body=F('dockBody')
@@ -1030,18 +1030,26 @@ class ControlDock(QWidget):
     def place(self, location='top', initially=False):
         screen=QGuiApplication.primaryScreen().availableGeometry()
         margin=18
+        # Include the separate clickable controller in position calculations.
+        # Otherwise the short bar is centered but its controller extends off
+        # the right edge, and the overall unit looks misaligned.
+        active=isinstance(getattr(self,'control_island',None),DockControlIsland) and (
+            self.owner.recorder.active or
+            bool(self.owner.player and self.owner.player.isRunning()))
+        extra=(self.control_island.width()-8) if active else 0
+        visual_width=self.width()+extra
         # Previous releases called bottom-center "center". Starting with V4,
         # that alias means the requested top-centered placement.
         if location=='center':
             location='top'
         if location=='custom':
-            x=int(self.owner.settings.value('dock_x', screen.center().x()-self.width()//2))
+            x=int(self.owner.settings.value('dock_x', screen.center().x()-visual_width//2))
             y=int(self.owner.settings.value('dock_y', screen.top()+margin))
             if not screen.adjusted(-25,-25,25,25).contains(QPoint(x,y)):
                 location='top'
         if location!='custom':
             x=(screen.left()+margin if location=='top-left' else
-               screen.right()-self.width()-margin if location=='top-right' else
+               screen.right()-visual_width-margin if location=='top-right' else
                screen.center().x()-self.width()//2)
             y=screen.bottom()-self.height()-margin if location=='bottom' else screen.top()+margin
         self.move(x,y)
@@ -1053,7 +1061,7 @@ class ControlDock(QWidget):
         if compact == self.compact_active:
             return
         self.compact_active=compact
-        self.owner.settings.setValue('dock_compact_active',compact)
+        self.owner.settings.setValue('dock_short_while_active',compact)
         self.sync()
 
     def _sync_control_island(self, active, paused):
@@ -1065,7 +1073,9 @@ class ControlDock(QWidget):
             self.owner.recorder.set_interactive_bounds(None)
             return
         island.update_controls(paused, self.compact_active)
-        point=QPoint(self.x()+self.width()-island.width()-7,
+        # Dock and island are adjacent, making one intentionally short strip
+        # instead of stacking controls on top of a long empty status bar.
+        point=QPoint(self.x()+self.width()-8,
                      self.y()+(self.height()-island.height())//2)
         if island.pos()!=point:
             island.move(point)
@@ -1155,17 +1165,23 @@ class ControlDock(QWidget):
         island_active=bool(self.control_island and (recording or playing))
         # Compact mode is only used while the separate controller is active.
         # Leave the full-size dock unchanged for idle and countdown.
-        desired_width=550 if island_active and self.compact_active else 846
+        # Automatically shrink for both recording and replay. The compact
+        # status is small and the interactive controller sits next to it.
+        # Preserve custom dock placement when switching size.
+        desired_width=(332 if playing else 238) if island_active and self.compact_active else 846
         if self.width()!=desired_width:
             self.setFixedSize(desired_width,84)
-            self.place(str(self.owner.settings.value('dock_location','top')),initially=True)
+            location=str(self.owner.settings.value('dock_location','top'))
+            if location!='custom':
+                self.place(location,initially=True)
         self.stack.setCurrentIndex(1 if busy else 0)
         self.retake_button.setVisible(bool(self.owner.project.actions) and not busy)
         self.active_retake.setVisible(recording and not island_active)
         for widget in (self.active_handle,self.pause,self.stop,self.active_separator,
                        self.active_minimize,self.active_close):
             widget.setVisible(not island_active)
-        self.step_status.setFixedWidth(130 if island_active and self.compact_active else 230)
+        self.step_status.setFixedWidth(145 if island_active and self.compact_active else 230)
+        self.clock.setVisible(not (island_active and playing and self.compact_active))
         ready = self.owner.replay_ready and not busy
         self.primary_stack.setCurrentIndex(1 if ready else 0)
         self.center.setToolTip('Center before replay' if ready else 'Center before recording')
