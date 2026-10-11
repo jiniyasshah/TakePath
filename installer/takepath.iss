@@ -3,10 +3,10 @@
 ; Build from repository root after PyInstaller has created dist\TakePath.
 ;
 ; CI passes version parameters with:
-;   ISCC.exe /DMyAppVersion=1.2.0-beta.2 /DMyAppNumericVersion=1.2.0.0 installer\takepath.iss
+;   ISCC.exe /DMyAppVersion=1.2.0-beta.4 /DMyAppNumericVersion=1.2.0.0 installer\takepath.iss
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0-beta.2"
+  #define MyAppVersion "1.2.0-beta.4"
 #endif
 #ifndef MyAppNumericVersion
   #define MyAppNumericVersion "1.2.0.0"
