@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from . import __version__
 from .retakes import RetakeHistory
-from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, ACTION_TYPING_SPEED_MODES, TYPING_SPEED_FACTORS, effective_mouse_speed, effective_typing_speed
+from .core import Action, Project, interpolate_path, remove_actions, reorder_actions, format_replay_step, MOUSE_SPEED_FACTORS, ACTION_MOUSE_SPEED_MODES, ACTION_TYPING_SPEED_MODES, TYPING_SPEED_FACTORS, effective_mouse_speed, effective_typing_speed
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
@@ -1537,12 +1537,12 @@ class SecurePreflightDialog(QDialog):
             checkbox=QCheckBox('Save securely on this Windows PC')
             checkbox.setChecked(bool(allow_save))
             checkbox.setEnabled(allow_save)
-            if not allow_save: checkbox.setToolTip('Windows Credential Manager is unavailable. Session-only input still works.')
+            if not allow_save: checkbox.setToolTip('OS credential storage is unavailable. Input will be encrypted when the project is saved, once a secure key vault is available.')
             col.addWidget(checkbox)
             layout.addWidget(group)
             self.inputs[ref]=edit
             self.remember[ref]=checkbox
-        self.apply_all=QCheckBox('Use the first passphrase for all missing secure inputs')
+        self.apply_all=QCheckBox('Use the same value for every missing secure field')
         self.apply_all.setChecked(False)
         self.apply_all.setEnabled(len(self.inputs)>1)
         self.apply_all.setToolTip('Only enable when every missing field uses exactly the same secret.')
@@ -1851,7 +1851,7 @@ class MainWindow(QMainWindow):
         secret_row.addWidget(self.secret_reveal)
         secure_form.addLayout(secret_row)
         self.secret_remember=QCheckBox('Remember securely on this device')
-        self.secret_remember.setToolTip('Stored in Windows Credential Manager or the supported system keychain; only a reference is saved in a normal project.')
+        self.secret_remember.setToolTip('Also remembers the value in the OS credential vault. Save/Export always encrypts configured values inside the entire project file.')
         self.secret_remember.setChecked(bool(self.credential_store))
         self.secret_remember.setEnabled(bool(self.credential_store))
         secure_form.addWidget(self.secret_remember)
@@ -1868,7 +1868,7 @@ class MainWindow(QMainWindow):
         review=B('Review value',self.review_secure_value,'quiet',
                  'Explicitly load the configured value into the masked field for verification')
         secure_form.addWidget(review)
-        secret_help=L('Values stay hidden unless you click the eye icon. They never go in project JSON.','muted')
+        secret_help=L('Values remain hidden and are encrypted whenever you Save or Export the project.','muted')
         secret_help.setWordWrap(True)
         secure_form.addWidget(secret_help)
         sv.addWidget(self.secure_autofill)
@@ -2570,7 +2570,7 @@ class MainWindow(QMainWindow):
         persisted=self._read_saved_secret(a) is not None
         has_bundle=bool(self.project.encrypted_secrets)
         self.secret_status.setText('● Saved in system credential store' if persisted else
-                                   '● Ready for this session' if session else
+                                   '● Ready · included in encrypted saves' if session else
                                    '● Legacy encrypted input · reconfigure if needed'
                                    if has_bundle else
                                    '○ Missing · will ask before replay')
