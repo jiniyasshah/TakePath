@@ -345,7 +345,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         old=dock.compact_active
         try:
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]):
+                 patch('action_studio.ui.window_rect',side_effect=lambda hwnd: (
+                     [500,30,116,64] if hwnd==int(dock.control_island.winId())
+                     else [60,41,34,42])):
                 dock.show()
                 self.editor.recorder.active=True
                 dock.sync()
@@ -354,24 +356,33 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertTrue(dock.control_island.pause.isEnabled())
                 self.assertTrue(dock.control_island.stop.isEnabled())
                 self.assertFalse(dock.pause.isVisible())
-                self.assertEqual(self.editor.recorder.interactive_bounds,(500,30,146,64))
+                self.assertEqual(self.editor.recorder.interactive_bounds,(500,30,116,64))
+                self.assertEqual(self.editor.recorder.interactive_grip_bounds,(60,41,34,42))
+                self.assertTrue(dock.grip_overlay.isVisible())
                 dock.set_compact_mode(True)
-                self.assertEqual(dock.width(),174)
+                self.assertEqual(dock.width(),214)
                 self.assertEqual(dock.height(),64)
-                self.assertEqual(dock.control_island.width(),146)
+                self.assertEqual(dock.control_island.width(),116)
                 self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
                 self.assertEqual(dock.control_island.y(),dock.y())
                 self.assertEqual(dock.body.objectName(),'dockBodyJoinedLeft')
                 self.assertEqual(dock.control_island.frame.objectName(),'dockBodyJoinedRight')
-                self.assertEqual(dock.width()+dock.control_island.width(),320)
+                self.assertEqual(dock.width()+dock.control_island.width(),330)
+                grip_offset=dock.grip_overlay.pos()-dock.pos()
+                self.assertEqual(grip_offset.x(),8)
+                self.assertEqual(grip_offset.y(),11)
+                self.assertTrue(dock.grip_placeholder.isVisible())
                 dock.set_compact_mode(False)
                 self.assertEqual(dock.width(),846)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
+                self.assertEqual(dock.grip_overlay.pos()-dock.pos(),grip_offset)
                 self.editor.recorder.active=False
                 dock.sync()
                 self.assertFalse(dock.control_island.isVisible())
+                self.assertFalse(dock.grip_overlay.isVisible())
                 self.assertIsNone(self.editor.recorder.interactive_bounds)
+                self.assertIsNone(self.editor.recorder.interactive_grip_bounds)
                 self.assertEqual(dock.height(),84)
                 self.assertEqual(dock.body.objectName(),'dockBody')
         finally:
@@ -388,7 +399,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
             self.editor.recorder.active=True
             events=[]
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]), \
+                 patch('action_studio.ui.window_rect',side_effect=lambda hwnd: (
+                     [500,30,116,64] if hwnd==int(dock.control_island.winId())
+                     else [60,41,34,42])), \
                  patch.object(self.editor.recorder,'toggle_pause',
                               side_effect=lambda:events.append('pause')), \
                  patch.object(self.editor.recorder,'stop',
@@ -398,7 +411,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 QTest.mouseClick(dock.control_island.pause,Qt.LeftButton)
                 QTest.mouseClick(dock.control_island.stop,Qt.LeftButton)
                 self.assertEqual(events,['pause','stop'])
-                self.assertTrue(dock.control_island.drag_handle.isEnabled())
+                self.assertTrue(dock.grip_overlay.drag_handle.isEnabled())
         finally:
             self.editor.recorder.active=False
             dock.sync()
@@ -408,10 +421,12 @@ class EditorWaitSmokeTests(unittest.TestCase):
         from PySide6.QtCore import Qt
         dock=self.editor.dock
         island=dock.control_island
-        self.assertTrue(bool(island.windowFlags() & Qt.WindowDoesNotAcceptFocus))
-        self.assertTrue(island.testAttribute(Qt.WA_ShowWithoutActivating))
-        self.assertTrue(island.isWindow())
-        self.assertIsNone(island.parentWidget())
+        grip=dock.grip_overlay
+        for widget in (island,grip):
+            self.assertTrue(bool(widget.windowFlags() & Qt.WindowDoesNotAcceptFocus))
+            self.assertTrue(widget.testAttribute(Qt.WA_ShowWithoutActivating))
+            self.assertTrue(widget.isWindow())
+            self.assertIsNone(widget.parentWidget())
         self.assertTrue(dock.isWindow())
     def test_type_context_shows_typing_not_mouse_controls(self):
         action=self.Action(kind='type',text='example',char_delay=.1)
@@ -491,7 +506,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
             dock.set_compact_mode(True)
             self.editor.recorder.active=True
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]):
+                 patch('action_studio.ui.window_rect',side_effect=lambda hwnd: (
+                     [500,30,116,64] if hwnd==int(dock.control_island.winId())
+                     else [60,41,34,42])):
                 dock.show()
                 dock.sync()
                 dock.place('top',initially=True)
@@ -502,6 +519,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
                 self.assertEqual(dock.control_island.y(),dock.y())
                 self.assertEqual(dock.control_island.height(),dock.height())
+                self.assertEqual(dock.grip_overlay.x(),dock.x()+8)
+                self.assertEqual(dock.grip_overlay.y(),
+                                 dock.y()+(dock.height()-dock.grip_overlay.height())//2)
         finally:
             self.editor.recorder.active=False
             dock.sync()
@@ -519,17 +539,20 @@ class EditorWaitSmokeTests(unittest.TestCase):
             self.editor.player=SimpleNamespace(
                 isRunning=lambda:True,awaiting_secure_input=False,pause_flag=flag)
             with patch.object(dock,'_avoid_stealing_focus'), \
-                 patch('action_studio.ui.window_rect',return_value=[500,30,146,64]):
+                 patch('action_studio.ui.window_rect',side_effect=lambda hwnd: (
+                     [500,30,116,64] if hwnd==int(dock.control_island.winId())
+                     else [60,41,34,42])):
                 dock.show()
                 dock.sync()
                 self.qt.processEvents()
-                self.assertEqual(dock.width(),250)
+                self.assertEqual(dock.width(),290)
                 self.assertEqual(dock.height(),64)
                 self.assertFalse(dock.clock.isVisible())
                 self.assertTrue(dock.step_status.isVisible())
                 self.assertEqual(dock.control_island.x(), dock.x()+dock.width())
                 self.assertEqual(dock.control_island.y(), dock.y())
-                self.assertEqual(dock.width()+dock.control_island.width(),396)
+                self.assertEqual(dock.width()+dock.control_island.width(),406)
+                self.assertEqual(dock.grip_overlay.x(),dock.x()+8)
                 self.assertEqual(dock.body.objectName(),'dockBodyJoinedLeft')
         finally:
             self.editor.player=None
