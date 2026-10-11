@@ -1,7 +1,7 @@
 """Regression tests for shorter active dock and context-sensitive speed overrides."""
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from action_studio.core import (
     Action, Project, ACTION_TYPING_SPEED_MODES, TYPING_SPEED_FACTORS,
@@ -43,7 +43,7 @@ class TypingSpeedTests(unittest.TestCase):
                 player._wait=lambda *args,**kwargs:None
                 player._guard=lambda *args,**kwargs:None
                 player._unicode_type=lambda text,seconds,**kwargs:delays.append(seconds)
-                with patch('pyautogui'):
+                with patch.dict('sys.modules', {'pyautogui': MagicMock()}):
                     player._action(action)
                 self.assertEqual(len(delays),1)
                 self.assertAlmostEqual(delays[0],expected)
@@ -56,7 +56,7 @@ class TypingSpeedTests(unittest.TestCase):
         player._wait=lambda *args,**kwargs:None
         player._guard=lambda *args,**kwargs:None
         player._recorded_type=lambda *args:samples.append(args)
-        with patch('pyautogui'):
+        with patch.dict('sys.modules', {'pyautogui': MagicMock()}):
             player._action(action)
         self.assertEqual(samples[0][0],'abc')
 
