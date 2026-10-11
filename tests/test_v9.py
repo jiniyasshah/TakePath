@@ -40,7 +40,7 @@ class FinalPolishV9Tests(unittest.TestCase):
                         'QFrame#replayToolbar { background: #151A24;',
                         'QLabel { background: transparent; }'):
             self.assertIn(literal,UI)
-        self.assertIn("self.setWindowTitle('TakePath 1.0.2')",UI)
+        self.assertIn("self.setWindowTitle(f'TakePath {__version__}')",UI)
 
     def test_existing_actions_and_replay_still_connected(self):
         for literal in ('self.uniform_all','self.set_cursor_mode(v.lower())',

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSpinBox, QSplitter, QStackedWidget, QSystemTrayIcon, QTableWidget, QTableWidgetItem,
     QTextEdit, QVBoxLayout, QWidget,
 )
+from . import __version__
 from .retakes import RetakeHistory
 from .core import Action, Project, interpolate_path, load_project, save_project, remove_actions
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
@@ -1234,7 +1235,7 @@ class MainWindow(QMainWindow):
             self.tray.show()
         self._build_shortcuts()
         self.refresh()
-        self.setWindowTitle('TakePath 1.0.2')
+        self.setWindowTitle(f'TakePath {__version__}')
         self.setWindowIcon(app_icon())
         self.resize(1500,920)
         self.setMinimumSize(1010,690)
@@ -1602,7 +1603,7 @@ class MainWindow(QMainWindow):
         selected=len(self._rows())
         self.count_label.setText(f'{count} steps  ·  {selected} selected' if selected else f'{count} steps')
         self.save_state.setText('● Unsaved changes' if self.is_dirty else (self.project_path.name if self.project_path else 'Not saved'))
-        self.setWindowTitle(f"TakePath — {self.project.name}{' *' if self.is_dirty else ''}")
+        self.setWindowTitle(f"TakePath {__version__} — {self.project.name}{' *' if self.is_dirty else ''}")
 
     def set_adaptive_wait(self, enabled):
         if self.busy():return
