@@ -1851,7 +1851,10 @@ class MainWindow(QMainWindow):
         secret_row.addWidget(self.secret_reveal)
         secure_form.addLayout(secret_row)
         self.secret_remember=QCheckBox('Remember securely on this device')
-        self.secret_remember.setToolTip('Also remembers the value in the OS credential vault. Save/Export always encrypts configured values inside the entire project file.')
+        self.secret_remember.setToolTip(
+            'Optionally also remembers this value in Windows Credential Manager or '
+            'the supported system keychain. Save/Export always encrypts configured '
+            'values inside the entire project file.')
         self.secret_remember.setChecked(bool(self.credential_store))
         self.secret_remember.setEnabled(bool(self.credential_store))
         secure_form.addWidget(self.secret_remember)
