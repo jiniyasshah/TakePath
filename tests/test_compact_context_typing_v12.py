@@ -80,7 +80,10 @@ class TypingSpeedTests(unittest.TestCase):
     def test_active_dock_defaults_short_and_has_sidecar(self):
         source=(ROOT/'action_studio'/'ui.py').read_text(encoding='utf-8')
         self.assertIn("'dock_short_while_active','true'",source)
-        self.assertIn('desired_width=(250 if playing else 174)',source)
+        self.assertIn('desired_width=(290 if playing else 214)',source)
+        self.assertIn('class DockGripOverlay(QWidget)',source)
+        self.assertIn('grip_point=QPoint(self.x()+8',source)
+        self.assertIn('self.grip_placeholder.setVisible(island_active)',source)
         self.assertIn('point=QPoint(self.x()+self.width(), self.y())',source)
         self.assertIn('visual_width=self.width()+extra',source)
         self.assertIn("body_role='dockBodyJoinedLeft' if island_active else 'dockBody'",source)
