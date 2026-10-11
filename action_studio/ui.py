@@ -719,7 +719,10 @@ class DockDragHandle(QPushButton):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             if hasattr(self.dock,'_dock_geometry_animation'):
-                self.dock._dock_geometry_animation.stop()
+                animation=self.dock._dock_geometry_animation
+                if animation.state()==QPropertyAnimation.Running:
+                    animation.setCurrentTime(animation.duration())
+                    animation.stop()
             self.offset = event.globalPosition().toPoint() - self.dock.pos()
             event.accept()
         else:
@@ -1157,7 +1160,10 @@ class ControlDock(QWidget):
         menu.exec(self.more.mapToGlobal(QPoint(0,self.more.height()+6)))
 
     def place(self, location='top', initially=False):
-        self._dock_geometry_animation.stop()
+        if self._dock_geometry_animation.state()==QPropertyAnimation.Running:
+            self._dock_geometry_animation.setCurrentTime(
+                self._dock_geometry_animation.duration())
+            self._dock_geometry_animation.stop()
         screen=QGuiApplication.primaryScreen().availableGeometry()
         margin=18
         # Include the separate clickable controller in position calculations.
