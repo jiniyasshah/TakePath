@@ -223,5 +223,42 @@ class EditorWaitSmokeTests(unittest.TestCase):
             self.editor.player=None
             self.editor.dock.hide()
 
+    def test_mouse_speed_setting_keeps_action_selected_and_persists(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        self.editor.table.selectRow(0)
+        self.qt.processEvents()
+        QTest.mouseClick(self.editor.mouse_speed,Qt.LeftButton)
+        self.qt.processEvents()
+        self.assertEqual(self.editor._rows(),[0])
+        QTest.keyClick(self.editor.mouse_speed,Qt.Key_Escape)
+        self.editor.mouse_speed.setCurrentText('Fast')
+        self.assertEqual(self.editor.project.mouse_speed_mode,'fast')
+        self.assertEqual(self.editor._rows(),[0])
+        from action_studio.core import Project
+        saved=Project.from_dict(self.editor.project.to_dict())
+        self.assertEqual(saved.mouse_speed_mode,'fast')
+
+    def test_secure_inspector_fits_without_horizontal_scroll(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QPushButton, QLabel
+        self.editor.project.actions[0]=self.Action(kind='secure_input',secure_mode='auto')
+        action=self.editor.project.actions[0]
+        self.editor.refresh({action.id})
+        self.editor.inspector_form.ensureWidgetVisible(self.editor.secure_mode)
+        self.qt.processEvents()
+        self.assertEqual(self.editor.inspector_form.horizontalScrollBarPolicy(),
+                         Qt.ScrollBarAlwaysOff)
+        self.assertEqual(self.editor.inspector_title.text(),'Secure Input action')
+        review=[b for b in self.editor.secure_container.findChildren(QPushButton)
+                if b.text()=='Review value']
+        self.assertEqual(len(review),1)
+        self.assertTrue(review[0].parentWidget() is not None)
+        self.assertGreater(self.editor.secret_edit.width(),80)
+        hints=[l for l in self.editor.secure_container.findChildren(QLabel)
+               if 'They never go in project JSON' in l.text()]
+        self.assertEqual(len(hints),1)
+        self.assertTrue(hints[0].wordWrap())
+
 if __name__=='__main__':
     unittest.main()
