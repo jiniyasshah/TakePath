@@ -2559,14 +2559,33 @@ class MainWindow(QMainWindow):
     def _secret_key(self,a):
         return a.secure_ref if valid_reference(a.secure_ref) else a.id
 
+    def _read_saved_secret(self,a):
+        """Recover even if the user saved the workflow before configuring it.
+
+        Action IDs already survive project serialization. The vault alias
+        avoids needing to re-export the workflow merely to save a new UUID ref.
+        """
+        if not self.credential_store:
+            return None
+        for ref in (a.secure_ref,a.id):
+            if not valid_reference(ref):continue
+            try:
+                secret=self.credential_store.get(ref)
+                if secret is not None:return secret
+            except CredentialError:
+                continue
+        return None
+
+    def _save_action_aliases(self, actions, secret, primary_ref):
+        for action in actions:
+            if valid_reference(action.id) and action.id != primary_ref:
+                self.credential_store.set(action.id,secret)
+
     def _secure_status(self,a):
         self.secure_autofill.setVisible(a.secure_mode=='auto')
         if a.secure_mode!='auto':return
         session=self._secret_key(a) in self.session_secrets
-        persisted=False
-        if a.secure_ref and self.credential_store:
-            try:persisted=self.credential_store.get(a.secure_ref) is not None
-            except CredentialError:pass
+        persisted=self._read_saved_secret(a) is not None
         has_bundle=bool(self.project.encrypted_secrets)
         self.secret_status.setText('● Saved in system credential store' if persisted else
                                    '● Ready for this session' if session else
@@ -2622,7 +2641,9 @@ class MainWindow(QMainWindow):
             reuse=(len(targets)==1 and valid_reference(a.secure_ref)
                    and a.secure_ref not in other_refs)
             ref=a.secure_ref if reuse else uuid.uuid4().hex
-            try:self.credential_store.set(ref,secret)
+            try:
+                self.credential_store.set(ref,secret)
+                self._save_action_aliases(targets,secret,ref)
             except (CredentialError,ValueError) as exc:
                 QMessageBox.warning(self,'Secure storage failed',str(exc));return
             for target in targets:
@@ -2646,11 +2667,8 @@ class MainWindow(QMainWindow):
         if a is None:return
         key=self._secret_key(a)
         secret=self.session_secrets.get(key)
-        if secret is None and a.secure_ref and self.credential_store:
-            try:secret=self.credential_store.get(a.secure_ref)
-            except CredentialError as exc:
-                _warn_in_front(self._visible_dialog_parent(),'Secure value unavailable',str(exc))
-                return
+        if secret is None:
+            secret=self._read_saved_secret(a)
         if secret is None:
             self.notice('No configured value to review. Enter a new one or supply it during replay.')
             return
@@ -2663,14 +2681,18 @@ class MainWindow(QMainWindow):
         a=self._selected_secure()
         if a is None:return
         keys={a.id,self._secret_key(a)}
-        if a.secure_ref and self.credential_store:
-            # Shared credential must survive removing it from one action.
-            shared=any(other is not a and other.secure_ref==a.secure_ref
-                       for other in self.project.actions)
-            if not shared:
-                try:self.credential_store.delete(a.secure_ref)
-                except CredentialError as exc:
-                    QMessageBox.warning(self,'Could not remove stored value',str(exc));return
+        if self.credential_store:
+            # Delete only this action's ID alias; do not revoke a shared ref.
+            try:
+                if valid_reference(a.id):
+                    self.credential_store.delete(a.id)
+                shared=any(other is not a and other.secure_ref==a.secure_ref
+                           for other in self.project.actions)
+                if valid_reference(a.secure_ref) and not shared and a.secure_ref!=a.id:
+                    self.credential_store.delete(a.secure_ref)
+            except CredentialError as exc:
+                QMessageBox.warning(self,'Could not remove stored value',str(exc));return
+        if a.secure_ref:
             a.secure_ref=''
             self.dirty()
         for key in keys:self.session_secrets.pop(key,None)
@@ -3257,11 +3279,7 @@ class MainWindow(QMainWindow):
             if key in self.session_secrets:
                 available[key]=self.session_secrets[key]
                 continue
-            secret=None
-            if a.secure_ref and self.credential_store:
-                try:secret=self.credential_store.get(a.secure_ref)
-                except CredentialError:
-                    secret=None
+            secret=self._read_saved_secret(a)
             if secret is not None:
                 available[key]=secret
             else:
@@ -3298,7 +3316,12 @@ class MainWindow(QMainWindow):
                 shared_secret=submitted[0][1]
                 if submitted[0][2] and self.credential_store:
                     shared_ref=uuid.uuid4().hex
-                    try:self.credential_store.set(shared_ref,shared_secret)
+                    try:
+                        self.credential_store.set(shared_ref,shared_secret)
+                        affected=[a for a in self.project.actions
+                                  if a.id in key_by_action and
+                                  key_by_action[a.id] in {k for k,_,_ in submitted}]
+                        self._save_action_aliases(affected,shared_secret,shared_ref)
                     except (CredentialError,ValueError) as exc:
                         _warn_in_front(self._visible_dialog_parent(),
                             'Secure storage failed',str(exc)+'\n\nReplay has not started.')
@@ -3317,8 +3340,12 @@ class MainWindow(QMainWindow):
             for key,secret,save_on_pc in ([] if reuse_all else submitted):
                 # A key may be the action's ID if no secure reference exists.
                 if save_on_pc and self.credential_store:
-                    ref=key if valid_reference(key) and any(a.secure_ref==key for a in self.project.actions) else uuid.uuid4().hex
-                    try:self.credential_store.set(ref,secret)
+                    ref=key if valid_reference(key) else uuid.uuid4().hex
+                    try:
+                        self.credential_store.set(ref,secret)
+                        affected=[a for a in self.project.actions
+                                  if a.id in key_by_action and key_by_action[a.id]==key]
+                        self._save_action_aliases(affected,secret,ref)
                     except (CredentialError,ValueError) as exc:
                         _warn_in_front(self.dock,'Secure storage failed',str(exc)+'\n\nReplay has not started.')
                         return False
