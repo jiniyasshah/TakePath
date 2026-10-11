@@ -1,3 +1,15 @@
+## v1.2.0-beta.4 — release candidate (pending native smoke test)
+
+- Dark charcoal editor styling with restrained blue accents, inspired by the user's Recordly screenshot.
+- Smooth dock shrink/expand preserving the dock's current visual center and the left drag-grip position.
+- Minimize to a normal Windows taskbar entry; restoring reopens the floating recorder.
+- Fix Mouse Speed submenu disappearing as the pointer moves into its choices; return to native Qt behavior.
+- Opt-in shared secure passphrase for multiple auto-fill steps, with OS-secure saving selected by default when available.
+- Separate encrypted portable export: AES-256-GCM with scrypt passphrase derivation; unlock at runtime, never store the passphrase.
+- Normal project files stay secret-free. Full Windows focus, display scaling, and security smoke tests are required before tagging.
+
+---
+
 # TakePath 1.2.0 Beta 2
 
 **Pre-release · Windows primary target · macOS and Linux X11 preview**

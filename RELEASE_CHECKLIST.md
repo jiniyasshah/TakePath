@@ -6,7 +6,7 @@
 
 - [ ] Run `TakePath-windows-x64-setup.exe` on a clean **non-Python** Windows profile; no `python.exe` or `pip install` required
 - [ ] Confirm Setup installs under `%LOCALAPPDATA%\Programs\TakePath`, creates a Start Menu shortcut, and optionally a desktop shortcut
-- [ ] Launch via Start Menu and verify the app title displays `1.2.0-beta.2`; verify `Windows Settings → Installed Apps → TakePath → Uninstall` removes the installed application
+- [ ] Launch via Start Menu and verify the app title displays `1.2.0-beta.4`; verify `Windows Settings → Installed Apps → TakePath → Uninstall` removes the installed application
 - [ ] Check installing the same version again updates in place without a duplicate Installed Apps entry; check the program is closed before install/uninstall
 
 - [ ] Run the built `TakePath-windows-x64.exe` and extracted portable ZIP app; tray/dock launch without Python installed
@@ -21,7 +21,13 @@
 - [ ] Add a manual **Wait** step for expected window title; check a matching condition and a deliberately impossible condition (timeout stops safely)
 - [ ] While replaying a window-scoped take, open the Start menu; replay enters WAIT TARGET and stops safely if the original window stays unfocused
 - [ ] Use a **dummy password** in a real native/browser password field and check secure auto-fill is blocked if the destination cannot be verified
-- [ ] Confirm no secret is written to project JSON; manual/skip modes work; replay errors remain visible on the dock
+- [ ] Confirm local Remember saving persists after project reopen on the same OS account without reprompting
+- [ ] Reuse a dummy secret across multiple auto-fill steps, then edit one; other steps' saved values must remain unchanged
+- [ ] Export encrypted copy; unlock with correct passphrase after reopening, reject wrong passphrase or tampering; never include plaintext in saved JSON
+- [ ] Minimize the dock and restore from the taskbar, during idle and recording/replay; verify browser focus and F7/F8
+- [ ] Shrink/expand with easing at 100% and 150% scaling; visual center and far-left drag grip must stay aligned
+- [ ] Hover from Mouse speed root into the submenu, select Fast/Slow without menu disappearing
+- [ ] Confirm no plaintext secret is written to ordinary project JSON; manual/skip modes work; replay errors remain visible on the dock
 - [ ] Test Replay vs Retake, session restore, multi-select deletion, and unsaved-project confirmation
 
 ## macOS Apple Silicon and Intel — preview checks

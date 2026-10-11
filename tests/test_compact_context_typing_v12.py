@@ -73,7 +73,8 @@ class TypingSpeedTests(unittest.TestCase):
         self.assertIn("if mouse_actions:",source)
         self.assertIn("if typed:",source)
         self.assertIn("if timed:",source)
-        self.assertIn("def _close_irrelevant_submenus(menu, hovered_action):",source)
+        self.assertNotIn("def _close_irrelevant_submenus(menu, hovered_action):",source)
+        self.assertNotIn("menu.hovered.connect(",source)
         self.assertIn("class ActionContextMenu(QMenu)",source)
         self.assertIn("typing_speed_override",source)
 

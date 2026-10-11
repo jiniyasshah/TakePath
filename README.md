@@ -49,6 +49,7 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 ### Capture and replay
 
 - **Smart click-through dock (Windows):** while recording or replaying, the floating status bar lets mouse clicks reach the underlying app (including browser address bars), while a **separate small controller** keeps **Pause, Stop and a drag handle clickable with the mouse**. **F7/F8** continue to work. Controller clicks and drags are excluded from the recorded actions.
+- **Taskbar minimize and smooth dock transitions (Windows):** The dock minimizes into the normal taskbar instead of hiding only in the tray. Restoring returns to the dock. Compact/expanded resizing is eased around the existing visual center; the drag grip remains on the far left.
 - **Short recording/replay dock by default:** TakePath automatically shrinks the status bar when a capture or replay starts, with the clickable Pause/Stop controller alongside it. The controller's compact/expand button can restore the extended layout, and the preference persists. The normal full dock returns when the session ends.
 - **Detailed action capture:** mouse clicks, moves, drags, scrolls, side buttons, typed text, and shortcuts.
 - **Type-aware action context menu:** Right-click selected action rows to configure **Mouse speed** for clicks/drags/scrolls, **Typing speed** (Original, Normal, Fast, Slow, Instant or global default) for Type actions, or **Wait duration** for fixed Wait steps. Multi-select applies a setting to only the applicable action types. Enable/Disable, Duplicate and Delete stay available for all. A zero action delay does not by itself make mouse motion instant.
@@ -73,7 +74,10 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 - Choose **Auto-fill**, **Manual**, or **Skip** for each secure step.
 - Enter a value in the editor or supply missing values in a prompt before playback.
 - Optionally reveal a configured value for verification; values are hidden by default.
-- Passwords are **not serialized into project JSON**. Secure persistence uses the operating system's credential store where available; session-only values remain an option.
+- **Remember securely on this device** is selected by default when a supported OS credential vault is available; session-only storage remains an option. OS-protected values stay on the same computer/account and are not automatically portable.
+- **Use for all auto-fill secure input steps** is an explicit opt-in when multiple protected fields require the same value. Individual steps can still use distinct values.
+- **Export encrypted…** saves a separate portable project with AES-256-GCM-encrypted secure inputs and a user-supplied passphrase (scrypt key derivation). Unlock during replay on another computer. The passphrase is never saved and cannot be recovered if lost.
+- Ordinary project saves never contain plaintext secure input values. Explicit portable encrypted exports include authenticated ciphertext; treat them as sensitive files.
 
 ## Download
 

@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo
+from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QRectF, QSize, QSettings, QSignalBlocker, Qt, QTimer, Signal, QFileInfo, QVariantAnimation, QEasingCurve, QAbstractAnimation
 from PySide6.QtGui import QAction, QColor, QDoubleValidator, QFont, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QImage, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
@@ -27,6 +27,7 @@ from .core import Action, Project, interpolate_path, load_project, save_project,
 from .recorder import Recorder, activate_target_window, center_cursor, foreground, title_of, virtual_screen, window_rect
 from .playback import Player
 from .secure_store import WindowsCredentialStore, CredentialError, validate_password, valid_reference, credential_store
+from .portable_secrets import encrypt_secret_bundle, decrypt_secret_bundle, PortableSecretError
 from .targets import open_windows, usable_window, screen_entries, window_menu_label
 from .platform_api import (foreground as platform_foreground, window_pid, is_ours as platform_is_ours,
                            activate_target_window as platform_activate, center_cursor as platform_center,
@@ -190,6 +191,51 @@ QLineEdit#gapText { background: transparent; color: #F0F4FC; border: none; borde
   padding: 0px; font-size: 12px; font-weight: 650; selection-background-color: #506C9F; }
 QLineEdit#gapText:focus { border: none; background: transparent; }
 QLabel#gapUnit { background: transparent; color: #A5AFBF; font-size: 11px; font-weight: 600; }
+
+/* Recordly-inspired charcoal interface, with restrained cobalt-blue actions.
+   Keep recording red and security warnings distinct for legibility. */
+QWidget { background: #0F1013; color: #E9EAEE; }
+QMainWindow, QDialog { background: #0F1013; }
+QFrame#topBar { background: #17181D; border-bottom: 1px solid #292A31; }
+QFrame#rail { background: #111216; border-right: 1px solid #292A31; }
+QFrame#card { background: #17181D; border: 1px solid #292B32; border-radius: 13px; }
+QFrame#soft, QFrame#sectionStrip { background: #1D1F25; border: 1px solid #30323A; }
+QFrame#toolbar { background: #191B20; border: 1px solid #2C2F37; }
+QFrame#replayToolbar { background: #16181D; border: 1px solid #30323A; }
+QFrame#toolbarDivider, QFrame#separator { background: #34363E; }
+QLabel#tiny, QLabel#toolbarCaption { color: #9396A0; }
+QLabel#muted { color: #A2A5AF; }
+QPushButton { background: #24262D; border: 1px solid #353842; color: #E9EAEE; }
+QPushButton:hover { background: #30333C; border-color: #525660; }
+QPushButton#primary { background: #316BEA; border-color: #316BEA; color: white; }
+QPushButton#primary:hover { background: #407BF5; border-color: #407BF5; }
+QPushButton#quiet { background: transparent; border-color: transparent; color: #D5D7DE; }
+QPushButton#quiet:hover { background: #292B32; }
+QPushButton#outline { background: #1E2026; border: 1px solid #393C46; }
+QPushButton#outline:hover { background: #292D36; }
+QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+  background: #202228; color: #EFF0F4; border: 1px solid #393C45;
+  border-radius: 8px; selection-background-color: #315FBF; }
+QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
+QDoubleSpinBox:focus { border-color: #427DFC; }
+QTableWidget { background: #131419; alternate-background-color: #191B21;
+  selection-background-color: #253A65; selection-color: #F6F8FF;
+  gridline-color: #25272F; }
+QHeaderView::section { background: #1D1F25; color: #A5A9B4;
+  border: 0; border-bottom: 1px solid #373941; }
+QMenu { background: #1B1D23; color: #EFF0F4;
+  border: 1px solid #3B3D47; border-radius: 10px; padding: 7px; }
+QMenu::item:selected { background: #304A78; color: #FFFFFF; }
+QMenu::separator { background: #343740; }
+QDoubleSpinBox#toolbarInput, QComboBox#toolbarInput {
+  background: #24262D; color: #E9EAEE; border: 1px solid #393C46; }
+QPushButton#toolbarApply { background: #294675; border: 1px solid #4164A2; }
+QPushButton#toolbarApply:hover { background: #345A98; }
+QPushButton#toolbarToggle { background: #252730; border-color: #383B44; }
+QPushButton#toolbarToggle:checked { background: #253C68; border-color: #4276DA; }
+QFrame#gapControl { background: #24262D; border-color: #393C46; }
+QFrame#dockBody, QFrame#dockBodyJoinedLeft, QFrame#dockBodyJoinedRight {
+  background: #17181E; }
 """
 
 # Compact, rendered vector icons instead of platform-dependent Unicode glyphs.
@@ -672,6 +718,11 @@ class DockDragHandle(QPushButton):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if hasattr(self.dock,'_dock_geometry_animation'):
+                animation=self.dock._dock_geometry_animation
+                if animation.state()==QAbstractAnimation.State.Running:
+                    animation.setCurrentTime(animation.duration())
+                    animation.stop()
             self.offset = event.globalPosition().toPoint() - self.dock.pos()
             event.accept()
         else:
@@ -823,6 +874,11 @@ class ControlDock(QWidget):
         self.compact_active = str(owner.settings.value('dock_short_while_active','true')).lower() == 'true'
         self.control_island = None
         self.grip_overlay = None
+        self._dock_geometry_animation=QVariantAnimation(self)
+        self._dock_geometry_animation.valueChanged.connect(self._apply_dock_geometry)
+        self._dock_geometry_animation.setDuration(245)
+        self._dock_geometry_animation.setEasingCurve(QEasingCurve.InOutCubic)
+        self._target_dimensions=(846,84)
         root=V(self,(10,7,10,9),0)
         self.root_layout=root
         body=F('dockBody')
@@ -908,7 +964,7 @@ class ControlDock(QWidget):
         row.addWidget(self.edit_dock)
         self.more=icon_button('dots',self.show_more,'More options')
         row.addWidget(self.more)
-        row.addWidget(icon_button('minus',self.minimize_to_tray,'Minimize to notification area'))
+        row.addWidget(icon_button('minus',self.minimize_to_taskbar,'Minimize to taskbar'))
         row.addWidget(icon_button('close',self.close,'Close TakePath'))
         self.stack.addWidget(idle)
 
@@ -949,7 +1005,7 @@ class ControlDock(QWidget):
         row.addStretch(1)
         self.active_separator=self._separator()
         row.addWidget(self.active_separator)
-        self.active_minimize=icon_button('minus',self.minimize_to_tray,'Minimize to notification area')
+        self.active_minimize=icon_button('minus',self.minimize_to_taskbar,'Minimize to taskbar')
         self.active_close=icon_button('close',self.close,'Stop and close')
         row.addWidget(self.active_minimize)
         row.addWidget(self.active_close)
@@ -1105,6 +1161,10 @@ class ControlDock(QWidget):
         menu.exec(self.more.mapToGlobal(QPoint(0,self.more.height()+6)))
 
     def place(self, location='top', initially=False):
+        if self._dock_geometry_animation.state()==QAbstractAnimation.State.Running:
+            self._dock_geometry_animation.setCurrentTime(
+                self._dock_geometry_animation.duration())
+            self._dock_geometry_animation.stop()
         screen=QGuiApplication.primaryScreen().availableGeometry()
         margin=18
         # Include the separate clickable controller in position calculations.
@@ -1179,9 +1239,43 @@ class ControlDock(QWidget):
 
     def moveEvent(self,event):
         super().moveEvent(event)
+        self._reposition_active_controls()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        self._reposition_active_controls()
+
+    def _reposition_active_controls(self):
         if self.control_island is not None and self.control_island.isVisible():
             self._sync_control_island(True, self.owner.recorder.paused or
                 bool(self.owner.player and self.owner.player.pause_flag.is_set()))
+
+    def _apply_dock_geometry(self,rect):
+        """Explicit fixed geometry overrides minimum layout width from idle page.
+
+        Animating QWidget.geometry directly is clamped by the idle page's
+        minimumSizeHint and leaves a half-sized 630px dock on Windows.
+        """
+        self.setFixedSize(rect.size())
+        self.move(rect.topLeft())
+
+    def _transition_dock_geometry(self, width, height, active):
+        """Animate about the existing combined dock center, never the screen center."""
+        previous_total=self.width()+(
+            self.control_island.width() if self.control_island is not None
+            and self.control_island.isVisible() else 0)
+        center_x=self.x()+previous_total/2
+        center_y=self.y()+self.height()/2
+        new_total=width+(self.control_island.width() if active and self.control_island else 0)
+        goal=QRect(round(center_x-new_total/2),round(center_y-height/2),width,height)
+        self._target_dimensions=(width,height)
+        self._dock_geometry_animation.stop()
+        if not self.isVisible():
+            self._apply_dock_geometry(goal)
+            return
+        self._dock_geometry_animation.setStartValue(self.geometry())
+        self._dock_geometry_animation.setEndValue(goal)
+        self._dock_geometry_animation.start()
 
     def hideEvent(self,event):
         if self.control_island is not None:
@@ -1191,15 +1285,9 @@ class ControlDock(QWidget):
             self.owner.recorder.set_interactive_bounds(None)
         super().hideEvent(event)
 
-    def minimize_to_tray(self):
-        if self.owner.tray and self.owner.tray.isVisible():
-            self.hide()
-            self.owner.tray.showMessage('TakePath','Recording controls are available from the tray icon.',QSystemTrayIcon.Information,1800)
-        else:
-            # Always leave a visible way back if the OS has no system tray.
-            if not self.owner.busy():
-                self.owner.show_editor()
-                self.owner.showMinimized()
+    def minimize_to_taskbar(self):
+        """Minimize through the editor's ordinary taskbar window."""
+        self.owner.minimize_dock_to_taskbar()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1267,11 +1355,8 @@ class ControlDock(QWidget):
             self.body.style().unpolish(self.body)
             self.body.style().polish(self.body)
             self.body.update()
-        if self.size()!=QSize(desired_width,desired_height):
-            self.setFixedSize(desired_width,desired_height)
-            location=str(self.owner.settings.value('dock_location','top'))
-            if location!='custom':
-                self.place(location,initially=True)
+        if self._target_dimensions!=(desired_width,desired_height):
+            self._transition_dock_geometry(desired_width,desired_height,island_active)
         self.stack.setCurrentIndex(1 if busy else 0)
         self.retake_button.setVisible(bool(self.owner.project.actions) and not busy)
         self.active_retake.setVisible(recording and not island_active)
@@ -1424,7 +1509,7 @@ class SecurePreflightDialog(QDialog):
         layout=V(self,(24,22,24,20),14)
         layout.addWidget(L('Complete secure inputs','heading'))
         explanation=L('These values will be typed automatically into the target app. '
-                      'Choose whether to save each one in Windows Credential Manager or use it only for this session.','muted')
+                      'Securely save on this device, or reuse one value for every missing step when appropriate.','muted')
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
         self.inputs={}
@@ -1440,13 +1525,19 @@ class SecurePreflightDialog(QDialog):
             password_row.addWidget(password_reveal_button(edit))
             col.addLayout(password_row)
             checkbox=QCheckBox('Save securely on this Windows PC')
-            checkbox.setChecked(False)
+            checkbox.setChecked(bool(allow_save))
             checkbox.setEnabled(allow_save)
             if not allow_save: checkbox.setToolTip('Windows Credential Manager is unavailable. Session-only input still works.')
             col.addWidget(checkbox)
             layout.addWidget(group)
             self.inputs[ref]=edit
             self.remember[ref]=checkbox
+        self.apply_all=QCheckBox('Use the first passphrase for all missing secure inputs')
+        self.apply_all.setChecked(False)
+        self.apply_all.setEnabled(len(self.inputs)>1)
+        self.apply_all.setToolTip('Only enable when every missing field uses exactly the same secret.')
+        self.apply_all.toggled.connect(self._toggle_reuse)
+        layout.addWidget(self.apply_all)
         self.error=L('','muted');self.error.setStyleSheet('color:#FF8899;');layout.addWidget(self.error)
         btn=QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
         btn.button(QDialogButtonBox.Ok).setText('Prepare replay')
@@ -1455,30 +1546,89 @@ class SecurePreflightDialog(QDialog):
         layout.addWidget(btn)
         if self.inputs:next(iter(self.inputs.values())).setFocus()
 
+    def _toggle_reuse(self, enabled):
+        first=next(iter(self.inputs))
+        for ref,widget in self.inputs.items():
+            if ref==first:continue
+            widget.setEnabled(not enabled)
+            self.remember[ref].setEnabled(not enabled and self.remember[first].isEnabled())
+
     def _confirm(self):
         try:
-            for widget in self.inputs.values():validate_password(widget.text())
+            if self.apply_all.isChecked():
+                validate_password(next(iter(self.inputs.values())).text())
+            else:
+                for widget in self.inputs.values():validate_password(widget.text())
         except ValueError:
-            self.error.setText('Enter a value for every missing secure input.')
+            self.error.setText('Enter a value for every required secure input.')
             return
         self.accept()
 
     def submitted(self):
-        # Caller immediately transfers values to ephemeral memory / credential
-        # manager and then the dialog is discarded.
+        # Explicit opt-in to reuse the first value, never automatic guessing.
+        if self.apply_all.isChecked():
+            first=next(iter(self.inputs))
+            secret=self.inputs[first].text()
+            persist=self.remember[first].isChecked()
+            return [(ref,secret,persist) for ref in self.inputs]
         return [(ref,edit.text(),self.remember[ref].isChecked()) for ref,edit in self.inputs.items()]
 
 
+class PortablePassphraseDialog(QDialog):
+    """User-supplied export/unlock passphrase. Never save or remember it."""
+    def __init__(self,parent=None,confirm=False):
+        super().__init__(parent)
+        self.setWindowTitle('Encrypt portable project' if confirm else 'Unlock portable project')
+        self.setMinimumWidth(460)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint,False)
+        layout=V(self,(22,20,22,18),12)
+        help_text=('A portable copy will include AES-GCM encrypted secure values. '
+                   'Remember this passphrase: it cannot be recovered.'
+                   if confirm else
+                   'This project contains encrypted secure values. '
+                   'Enter its export passphrase to unlock them for replay.')
+        help_label=L(help_text,'muted');help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+        self.value=QLineEdit()
+        self.value.setEchoMode(QLineEdit.Password)
+        self.value.setPlaceholderText('Passphrase (12+ characters)')
+        self.value.setMaxLength(512)
+        row=H(spacing=8);row.addWidget(self.value,1);row.addWidget(password_reveal_button(self.value))
+        layout.addLayout(row)
+        self.confirm=QLineEdit() if confirm else None
+        if self.confirm is not None:
+            self.confirm.setEchoMode(QLineEdit.Password)
+            self.confirm.setPlaceholderText('Confirm passphrase')
+            row=H(spacing=8);row.addWidget(self.confirm,1);row.addWidget(password_reveal_button(self.confirm))
+            layout.addLayout(row)
+        self.error=L('','muted');layout.addWidget(self.error)
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept_if_valid);buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept_if_valid(self):
+        if len(self.value.text()) < 12:
+            self.error.setText('Use at least 12 characters.')
+        elif self.confirm is not None and self.value.text()!=self.confirm.text():
+            self.error.setText('Passphrases do not match.')
+        else:
+            self.accept()
+
+    def passphrase(self):
+        return self.value.text()
+
+    def clear_passphrase(self):
+        self.value.clear()
+        if self.confirm is not None:self.confirm.clear()
+
+
 class ActionContextMenu(QMenu):
-    """Dismiss lingering submenus immediately on unrelated root-row hover."""
-    def mouseMoveEvent(self,event):
-        hovered=self.actionAt(event.position().toPoint())
-        if hovered is not None:
-            for root in self.actions():
-                submenu=root.menu()
-                if submenu is not None and root is not hovered and submenu.isVisible():
-                    submenu.hide()
-        super().mouseMoveEvent(event)
+    """Use Qt's native submenu aim/timing; do not hide on pointer movement.
+
+    Previously aggressive hover handlers closed Mouse Speed as the cursor
+    crossed the small gap from the root item into its submenu.
+    """
+    pass
 
 
 class ActionTable(QTableWidget):
@@ -1564,6 +1714,8 @@ class MainWindow(QMainWindow):
         self.is_dirty=False
         self.session_secrets={}  # memory-only; not written into projects / settings
         self.prepared_secure={}
+        self.portable_unlocked={}  # in-memory decrypted secure action IDs
+        self._dock_taskbar_minimized=False
         try:
             self.credential_store=credential_store()
         except CredentialError:
@@ -1641,6 +1793,8 @@ class MainWindow(QMainWindow):
         hb.addWidget(self.name)
         hb.addStretch(1)
         hb.addWidget(B('Save',self.save,'outline','Save project · Ctrl+S'))
+        hb.addWidget(B('Export encrypted…',self.export_encrypted_project,'outline',
+                       'Create a portable copy with passphrase-encrypted secure inputs'))
         hb.addWidget(B('Back to recorder',self.show_dock,'quiet'))
         hb.addWidget(B('New capture',self.prepare_new_capture,'outline','Close editor and return to the recorder bar'))
         hb.addWidget(B('▶  Replay',self.prepare_replay,'primary','Switch to replay dock. Press Play there to start.'))
@@ -1729,8 +1883,14 @@ class MainWindow(QMainWindow):
         self.secret_reveal=password_reveal_button(self.secret_edit)
         secret_row.addWidget(self.secret_reveal)
         secure_form.addLayout(secret_row)
-        self.secret_remember=QCheckBox('Save securely on this Windows PC')
+        self.secret_remember=QCheckBox('Remember securely on this device (Windows Credential Manager / Keychain)')
+        self.secret_remember.setChecked(bool(self.credential_store))
+        self.secret_remember.setEnabled(bool(self.credential_store))
         secure_form.addWidget(self.secret_remember)
+        self.secret_apply_all=QCheckBox('Use for all auto-fill secure input steps')
+        self.secret_apply_all.setToolTip('Opt in only if every protected field requires the same value.')
+        self.secret_apply_all.setChecked(False)
+        secure_form.addWidget(self.secret_apply_all)
         # These controls used to be placed side by side in a 288px inspector,
         # forcing horizontal scrolling and clipping the password controls.
         controls=V(spacing=5)
@@ -2206,19 +2366,6 @@ class MainWindow(QMainWindow):
                       if 0<=i<len(self.project.actions)})
         self.notice(f'Fixed wait: {seconds:g}s for {len(changed)} action(s).')
 
-    @staticmethod
-    def _close_irrelevant_submenus(menu, hovered_action):
-        """Close submenu as soon as another root command is hovered.
-
-        On Windows/Qt the safe-triangle menu delay sometimes left the Mouse
-        speed submenu open while hovering Disable selected. Explicitly close
-        any submenu whose parent root action is no longer hovered.
-        """
-        for root in menu.actions():
-            child=root.menu()
-            if child is not None and root is not hovered_action and child.isVisible():
-                child.hide()
-
     def build_action_context_menu(self, pos):
         """Context-sensitive actions for the exact selected action types."""
         if self.busy():return None
@@ -2299,8 +2446,8 @@ class MainWindow(QMainWindow):
         duplicate.triggered.connect(self.duplicate)
         delete.triggered.connect(self.delete_selected)
 
-        menu.hovered.connect(
-            lambda hovered:self._close_irrelevant_submenus(menu,hovered))
+        # Native Qt hover and submenu safe-corridor behavior now owns opening
+        # and closing; forced hide() during mouse travel made it unusable.
         return menu
 
     def show_action_context_menu(self, pos):
@@ -2387,6 +2534,7 @@ class MainWindow(QMainWindow):
             with QSignalBlocker(self.secure_mode):
                 self.secure_mode.setCurrentIndex(max(0,self.secure_mode.findData(a.secure_mode)))
             self.secret_reveal.setChecked(False)
+            self.secret_apply_all.setChecked(False)
             self.secret_edit.clear()   # only review on explicit request
             self._secure_status(a)
         self.key_container.setVisible(a.kind=='key')
@@ -2425,16 +2573,38 @@ class MainWindow(QMainWindow):
     def _secret_key(self,a):
         return a.secure_ref if valid_reference(a.secure_ref) else a.id
 
+    def _read_saved_secret(self,a):
+        """Recover even if the user saved the workflow before configuring it.
+
+        Action IDs already survive project serialization. The vault alias
+        avoids needing to re-export the workflow merely to save a new UUID ref.
+        """
+        if not self.credential_store:
+            return None
+        for ref in (a.secure_ref,a.id):
+            if not valid_reference(ref):continue
+            try:
+                secret=self.credential_store.get(ref)
+                if secret is not None:return secret
+            except CredentialError:
+                continue
+        return None
+
+    def _save_action_aliases(self, actions, secret, primary_ref):
+        for action in actions:
+            if valid_reference(action.id) and action.id != primary_ref:
+                self.credential_store.set(action.id,secret)
+
     def _secure_status(self,a):
         self.secure_autofill.setVisible(a.secure_mode=='auto')
         if a.secure_mode!='auto':return
         session=self._secret_key(a) in self.session_secrets
-        persisted=False
-        if a.secure_ref and self.credential_store:
-            try:persisted=self.credential_store.get(a.secure_ref) is not None
-            except CredentialError:pass
-        self.secret_status.setText('● Saved in Windows Credential Manager' if persisted else
+        persisted=self._read_saved_secret(a) is not None
+        has_bundle=bool(self.project.encrypted_secrets)
+        self.secret_status.setText('● Saved in system credential store' if persisted else
                                    '● Ready for this session' if session else
+                                   '● Encrypted portable input · unlock when replaying'
+                                   if has_bundle else
                                    '○ Missing · will ask before replay')
 
     def _change_secure_mode(self,index):
@@ -2458,6 +2628,12 @@ class MainWindow(QMainWindow):
         a.kind='secure_input'; a.text=''; a.key='enter'; a.secure_mode='auto'; a.secure_ref=''
         self.dirty();self.refresh({a.id})
 
+    def _secure_targets(self, selected):
+        if self.secret_apply_all.isChecked():
+            return [a for a in self.project.actions
+                    if a.kind=='secure_input' and a.secure_mode=='auto']
+        return [selected]
+
     def set_secure_value(self):
         if self.busy():return
         a=self._selected_secure()
@@ -2465,25 +2641,57 @@ class MainWindow(QMainWindow):
         try:secret=validate_password(self.secret_edit.text())
         except ValueError as exc:
             QMessageBox.warning(self,'Secure input',str(exc));return
+        targets=self._secure_targets(a)
+        if not targets:return
         if self.secret_remember.isChecked():
             if not self.credential_store:
                 QMessageBox.warning(self,'Secure storage unavailable',
-                    'Windows Credential Manager is unavailable. Uncheck Save securely to use session-only storage.')
+                    'System credential storage is unavailable. Uncheck Remember for session-only values.')
                 return
-            ref=a.secure_ref if valid_reference(a.secure_ref) else uuid.uuid4().hex
-            try:self.credential_store.set(ref,secret)
+            # Never overwrite a credential shared with a different action when
+            # editing just one secure step: detach it to a fresh reference.
+            other_refs={other.secure_ref for other in self.project.actions
+                        if other not in targets and valid_reference(other.secure_ref)}
+            reuse=(len(targets)==1 and valid_reference(a.secure_ref)
+                   and a.secure_ref not in other_refs)
+            ref=a.secure_ref if reuse else uuid.uuid4().hex
+            try:
+                self.credential_store.set(ref,secret)
+                self._save_action_aliases(targets,secret,ref)
             except (CredentialError,ValueError) as exc:
                 QMessageBox.warning(self,'Secure storage failed',str(exc));return
-            a.secure_ref=ref
-            self.session_secrets.pop(a.id,None)
-            self.session_secrets.pop(ref,None)
+            for target in targets:
+                self.session_secrets.pop(target.id,None)
+                if target.secure_ref:self.session_secrets.pop(target.secure_ref,None)
+                target.secure_ref=ref
             self.dirty()
         else:
-            self.session_secrets[self._secret_key(a)]=secret
+            # Session-only must not silently revive an older persisted value
+            # the next time this project is loaded. Detach shared references
+            # and remove only the current actions' OS-store aliases.
+            external_refs={other.secure_ref for other in self.project.actions
+                           if other not in targets and valid_reference(other.secure_ref)}
+            for target in targets:
+                old_ref=target.secure_ref
+                if self.credential_store:
+                    try:
+                        if valid_reference(target.id):
+                            self.credential_store.delete(target.id)
+                        if (valid_reference(old_ref) and old_ref not in external_refs
+                                and old_ref!=target.id):
+                            self.credential_store.delete(old_ref)
+                    except CredentialError as exc:
+                        QMessageBox.warning(self,'Could not switch to session-only',str(exc))
+                        return
+                target.secure_ref=''
+                self.session_secrets.pop(old_ref,None)
+                self.session_secrets[target.id]=secret
+            self.dirty()
         self.secret_reveal.setChecked(False)
+        self.secret_apply_all.setChecked(False)
         self.secret_edit.clear()
         self._secure_status(a)
-        self.notice('Secure input configured; its value is not stored in the project.')
+        self.notice(f'Secure value applied to {len(targets)} step(s); no plaintext in project JSON.')
 
     def review_secure_value(self):
         """User-triggered review only: never automatically unmask saved secrets."""
@@ -2492,11 +2700,8 @@ class MainWindow(QMainWindow):
         if a is None:return
         key=self._secret_key(a)
         secret=self.session_secrets.get(key)
-        if secret is None and a.secure_ref and self.credential_store:
-            try:secret=self.credential_store.get(a.secure_ref)
-            except CredentialError as exc:
-                _warn_in_front(self._visible_dialog_parent(),'Secure value unavailable',str(exc))
-                return
+        if secret is None:
+            secret=self._read_saved_secret(a)
         if secret is None:
             self.notice('No configured value to review. Enter a new one or supply it during replay.')
             return
@@ -2509,10 +2714,20 @@ class MainWindow(QMainWindow):
         a=self._selected_secure()
         if a is None:return
         keys={a.id,self._secret_key(a)}
-        if a.secure_ref and self.credential_store:
-            try:self.credential_store.delete(a.secure_ref)
+        if self.credential_store:
+            # Delete only this action's ID alias; do not revoke a shared ref.
+            try:
+                if valid_reference(a.id):
+                    self.credential_store.delete(a.id)
+                shared=any(other is not a and other.secure_ref==a.secure_ref
+                           for other in self.project.actions)
+                if valid_reference(a.secure_ref) and not shared and a.secure_ref!=a.id:
+                    self.credential_store.delete(a.secure_ref)
             except CredentialError as exc:
                 QMessageBox.warning(self,'Could not remove stored value',str(exc));return
+        if a.secure_ref:
+            a.secure_ref=''
+            self.dirty()
         for key in keys:self.session_secrets.pop(key,None)
         self.secret_reveal.setChecked(False)
         self.secret_edit.clear()
@@ -2710,6 +2925,7 @@ class MainWindow(QMainWindow):
         if self.busy() or not self._discard_ok():return
         self.session_secrets.clear()
         self.prepared_secure.clear()
+        self.portable_unlocked.clear()
         self.take_history.clear()
         self.project=Project(cursor_mode=self.settings.value('cursor_mode','smooth'),
                              global_typing_mode=self.settings.value('typing_mode','smooth'))
@@ -2724,6 +2940,7 @@ class MainWindow(QMainWindow):
             path=Path(__file__).resolve().parent.parent/'examples'/'tutorial_demo.vas.json'
             self.session_secrets.clear()
             self.prepared_secure.clear()
+            self.portable_unlocked.clear()
             self.take_history.clear()
             self.project=load_project(path)
             self.project_path=None;self.is_dirty=False
@@ -2740,6 +2957,7 @@ class MainWindow(QMainWindow):
         try:
             self.session_secrets.clear()
             self.prepared_secure.clear()
+            self.portable_unlocked.clear()
             self.take_history.clear()
             self.project=load_project(path)
             self.project_path=Path(path)
@@ -2774,8 +2992,64 @@ class MainWindow(QMainWindow):
         self.project_path=Path(path)
         return self.save()
 
+    def minimize_dock_to_taskbar(self):
+        """Show a real Windows taskbar entry instead of hiding in the tray."""
+        self._dock_taskbar_minimized=True
+        self.dock.hide()
+        self.setWindowTitle(f'TakePath {__version__} · Recorder')
+        self.showMinimized()
+
+    def changeEvent(self,event):
+        super().changeEvent(event)
+        if (event.type()==QEvent.WindowStateChange and
+                self._dock_taskbar_minimized and not self.isMinimized()):
+            QTimer.singleShot(0,self._restore_minimized_dock)
+
+    def _restore_minimized_dock(self):
+        if not self._dock_taskbar_minimized:return
+        self._dock_taskbar_minimized=False
+        self.setWindowTitle(f'TakePath {__version__}')
+        self.hide()
+        self.dock.show()
+        self.dock.sync()
+
+    def export_encrypted_project(self):
+        """Export an encrypted copy. Ordinary Save keeps raw secrets out."""
+        if self.busy():return False
+        auto=[a for a in self.project.actions
+              if a.kind=='secure_input' and a.secure_mode=='auto' and a.enabled]
+        if not auto:
+            QMessageBox.information(self,'No secure steps',
+                'There are no enabled auto-fill secure inputs to encrypt.')
+            return False
+        if not self._prepare_secure_values():return False
+        prompt=PortablePassphraseDialog(self._visible_dialog_parent(),confirm=True)
+        try:
+            if _foreground_dialog(prompt).exec()!=QDialog.Accepted:return False
+            path,_=QFileDialog.getSaveFileName(self._visible_dialog_parent(),
+                'Export portable encrypted workflow',
+                str(Path.home()/'Encrypted workflow.vas.json'),
+                'TakePath projects (*.vas.json)')
+            if not path:return False
+            if not path.lower().endswith('.vas.json'):
+                path=path[:-5]+'.vas.json' if path.lower().endswith('.json') else path+'.vas.json'
+            snapshot=copy.deepcopy(self.project)
+            secrets={a.id:self.prepared_secure[a.id] for a in auto}
+            snapshot.encrypted_secrets=encrypt_secret_bundle(secrets,prompt.passphrase())
+            save_project(snapshot,Path(path))
+            self.notice('Encrypted portable project exported. Keep its passphrase safe.')
+            return True
+        except (PortableSecretError,ValueError,OSError,KeyError) as exc:
+            QMessageBox.warning(self,'Encrypted export failed',str(exc))
+            return False
+        finally:
+            self.prepared_secure.clear()
+            prompt.clear_passphrase()
+            prompt.close()
+
     def show_editor(self):
         if self.busy():return
+        self._dock_taskbar_minimized=False
         self.replay_ready=False
         self.prepared_secure.clear()
         self.showMaximized()
@@ -2784,6 +3058,7 @@ class MainWindow(QMainWindow):
         self.dock.hide()
 
     def show_dock(self):
+        self._dock_taskbar_minimized=False
         self.dock.show()
         self.hide()
         self.dock.raise_()
@@ -2963,6 +3238,7 @@ class MainWindow(QMainWindow):
         self.playback_completed=False
         self.session_secrets.clear()
         self.prepared_secure.clear()
+        self.portable_unlocked.clear()
         # A still image is captured only after explicit recording stops, not continuously.
         self.project.actions=actions
         self.project.target_mode=self.pending_record_scope
@@ -3036,25 +3312,73 @@ class MainWindow(QMainWindow):
             if key in self.session_secrets:
                 available[key]=self.session_secrets[key]
                 continue
-            secret=None
-            if a.secure_ref and self.credential_store:
-                try:secret=self.credential_store.get(a.secure_ref)
-                except CredentialError:
-                    secret=None
+            secret=self._read_saved_secret(a)
             if secret is not None:
                 available[key]=secret
             else:
                 missing[key]=f'Step {index+1} · Secure input'
+        # Portable secrets are authenticated and decrypted into RAM only.
+        if missing and self.project.encrypted_secrets:
+            if not self.portable_unlocked:
+                unlock=PortablePassphraseDialog(self._visible_dialog_parent())
+                if _foreground_dialog(unlock).exec()!=QDialog.Accepted:
+                    unlock.clear_passphrase()
+                    return False
+                try:
+                    self.portable_unlocked=decrypt_secret_bundle(
+                        self.project.encrypted_secrets,unlock.passphrase())
+                except PortableSecretError as exc:
+                    _warn_in_front(self._visible_dialog_parent(),
+                                   'Cannot unlock portable credentials',str(exc))
+                    return False
+                finally:
+                    unlock.clear_passphrase()
+                    unlock.close()
+            for a_id,key in key_by_action.items():
+                if key in missing and a_id in self.portable_unlocked:
+                    available[key]=self.portable_unlocked[a_id]
+                    missing.pop(key,None)
         if missing:
-            dlg=SecurePreflightDialog(list(missing.items()),self.dock,allow_save=bool(self.credential_store))
+            dlg=SecurePreflightDialog(list(missing.items()),self._visible_dialog_parent(),
+                                      allow_save=bool(self.credential_store))
             if _foreground_dialog(dlg).exec()!=QDialog.Accepted:return False
             submitted=dlg.submitted()
+            reuse_all=dlg.apply_all.isChecked() and len(submitted)>1
             for entry in dlg.inputs.values():entry.clear()
-            for key,secret,save_on_pc in submitted:
+            if reuse_all:
+                shared_secret=submitted[0][1]
+                if submitted[0][2] and self.credential_store:
+                    shared_ref=uuid.uuid4().hex
+                    try:
+                        self.credential_store.set(shared_ref,shared_secret)
+                        affected=[a for a in self.project.actions
+                                  if a.id in key_by_action and
+                                  key_by_action[a.id] in {k for k,_,_ in submitted}]
+                        self._save_action_aliases(affected,shared_secret,shared_ref)
+                    except (CredentialError,ValueError) as exc:
+                        _warn_in_front(self._visible_dialog_parent(),
+                            'Secure storage failed',str(exc)+'\n\nReplay has not started.')
+                        return False
+                    missing_keys={key for key,_,_ in submitted}
+                    for a in self.project.actions:
+                        if a.id in key_by_action and key_by_action[a.id] in missing_keys:
+                            a.secure_ref=shared_ref
+                            key_by_action[a.id]=shared_ref
+                    available[shared_ref]=shared_secret
+                    self.dirty()
+                else:
+                    for key,_,_ in submitted:
+                        available[key]=shared_secret
+                        self.session_secrets[key]=shared_secret
+            for key,secret,save_on_pc in ([] if reuse_all else submitted):
                 # A key may be the action's ID if no secure reference exists.
                 if save_on_pc and self.credential_store:
-                    ref=key if valid_reference(key) and any(a.secure_ref==key for a in self.project.actions) else uuid.uuid4().hex
-                    try:self.credential_store.set(ref,secret)
+                    ref=key if valid_reference(key) else uuid.uuid4().hex
+                    try:
+                        self.credential_store.set(ref,secret)
+                        affected=[a for a in self.project.actions
+                                  if a.id in key_by_action and key_by_action[a.id]==key]
+                        self._save_action_aliases(affected,secret,ref)
                     except (CredentialError,ValueError) as exc:
                         _warn_in_front(self.dock,'Secure storage failed',str(exc)+'\n\nReplay has not started.')
                         return False
@@ -3266,7 +3590,7 @@ def run():
         pass
     app=QApplication(sys.argv)
     app.setApplicationName('TakePath')
-    app.setApplicationVersion('1.1.0')
+    app.setApplicationVersion(__version__)
     app.setQuitOnLastWindowClosed(False)  # the only initial window is a Qt.Tool dock
     app.setWindowIcon(app_icon())
     app.setStyle('Fusion')

@@ -360,6 +360,10 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertEqual(self.editor.recorder.interactive_grip_bounds,(60,41,34,42))
                 self.assertTrue(dock.grip_overlay.isVisible())
                 dock.set_compact_mode(True)
+                from PySide6.QtTest import QTest
+                QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertEqual(dock.width(),214)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.width(),116)
@@ -373,12 +377,18 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertEqual(grip_offset.y(),11)
                 self.assertTrue(dock.grip_placeholder.isVisible())
                 dock.set_compact_mode(False)
+                QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertEqual(dock.width(),846)
                 self.assertEqual(dock.height(),64)
                 self.assertEqual(dock.control_island.x(),dock.x()+dock.width())
                 self.assertEqual(dock.grip_overlay.pos()-dock.pos(),grip_offset)
                 self.editor.recorder.active=False
                 dock.sync()
+                QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.assertFalse(dock.control_island.isVisible())
                 self.assertFalse(dock.grip_overlay.isVisible())
                 self.assertIsNone(self.editor.recorder.interactive_bounds)
@@ -480,7 +490,7 @@ class EditorWaitSmokeTests(unittest.TestCase):
         next(item for item in times.actions() if item.text()=='5 seconds').trigger()
         self.assertEqual(a.delay,5)
 
-    def test_unrelated_context_row_immediately_closes_hovered_mouse_submenu(self):
+    def test_mouse_speed_submenu_stays_accessible_during_hover(self):
         from PySide6.QtWidgets import QApplication
         a=self.Action(kind='click')
         self.editor.project.actions=[a]
@@ -494,7 +504,9 @@ class EditorWaitSmokeTests(unittest.TestCase):
         QApplication.processEvents()
         self.assertTrue(submenu.isVisible())
         menu.hovered.emit(disable)
-        self.assertFalse(submenu.isVisible(), 'Mouse speed submenu remained open on Disable')
+        self.assertTrue(submenu.isVisible(), 'App must not force-hide submenu during cursor travel')
+        next(item for item in submenu.actions() if item.text()=='Fast').trigger()
+        self.assertEqual(a.mouse_speed_override,'fast')
         menu.hide()
 
     def test_active_dock_centers_the_combined_capsule(self):
@@ -512,6 +524,10 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 dock.show()
                 dock.sync()
                 dock.place('top',initially=True)
+                from PySide6.QtTest import QTest
+                QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.qt.processEvents()
                 area=QGuiApplication.primaryScreen().availableGeometry()
                 full_width=dock.width()+dock.control_island.width()
@@ -544,6 +560,10 @@ class EditorWaitSmokeTests(unittest.TestCase):
                      else [60,41,34,42])):
                 dock.show()
                 dock.sync()
+                from PySide6.QtTest import QTest
+                QTest.qWait(310)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
                 self.qt.processEvents()
                 self.assertEqual(dock.width(),290)
                 self.assertEqual(dock.height(),64)
@@ -556,6 +576,123 @@ class EditorWaitSmokeTests(unittest.TestCase):
                 self.assertEqual(dock.body.objectName(),'dockBodyJoinedLeft')
         finally:
             self.editor.player=None
+            dock.set_compact_mode(old)
+            dock.hide()
+
+
+    def test_secure_preflight_explicitly_reuses_first_value(self):
+        from action_studio.ui import SecurePreflightDialog
+        names=[('a'*32,'First secure step'),('b'*32,'Second secure step')]
+        dlg=SecurePreflightDialog(names,self.editor,allow_save=True)
+        dlg.inputs[names[0][0]].setText('same-dummy-secret')
+        dlg.apply_all.setChecked(True)
+        self.assertFalse(dlg.inputs[names[1][0]].isEnabled())
+        self.assertTrue(dlg.remember[names[0][0]].isChecked())
+        from PySide6.QtWidgets import QDialog
+        dlg._confirm()
+        self.assertEqual(dlg.result(),QDialog.Accepted)
+        self.assertEqual(dlg.submitted(),[
+            (names[0][0],'same-dummy-secret',True),
+            (names[1][0],'same-dummy-secret',True),
+        ])
+        dlg.close()
+
+    def test_secure_inspector_apply_all_stores_one_shared_reference(self):
+        from types import SimpleNamespace
+        from action_studio.core import Project
+        values={}
+        fake=SimpleNamespace(
+            set=lambda ref,value:values.__setitem__(ref,value),
+            get=lambda ref:values.get(ref),
+            delete=lambda ref:values.pop(ref,None))
+        self.editor.credential_store=fake
+        a=self.Action(kind='secure_input',secure_mode='auto')
+        b=self.Action(kind='secure_input',secure_mode='auto')
+        self.editor.project=Project(actions=[a,b])
+        self.editor.refresh({a.id})
+        self.editor.secret_edit.setText('shared-dummy-passphrase')
+        self.editor.secret_remember.setChecked(True)
+        self.editor.secret_apply_all.setChecked(True)
+        self.editor.set_secure_value()
+        self.assertEqual(a.secure_ref,b.secure_ref)
+        self.assertEqual(values[a.secure_ref],'shared-dummy-passphrase')
+        self.assertEqual(len(values),3)  # shared ref plus both stable action IDs
+        self.assertEqual(values[a.id],'shared-dummy-passphrase')
+        self.assertEqual(values[b.id],'shared-dummy-passphrase')
+        self.assertNotIn('shared-dummy-passphrase',str(self.editor.project.to_dict()))
+        # Editing one item later must not overwrite the still-shared value.
+        self.editor.refresh({a.id})
+        self.editor.secret_edit.setText('different-dummy-passphrase')
+        self.editor.secret_apply_all.setChecked(False)
+        self.editor.set_secure_value()
+        self.assertNotEqual(a.secure_ref,b.secure_ref)
+        self.assertEqual(values[b.secure_ref],'shared-dummy-passphrase')
+
+    def test_secure_vault_alias_survives_unsaved_reference(self):
+        from types import SimpleNamespace
+        from action_studio.core import Project
+        a=self.Action(kind='secure_input',secure_mode='auto')
+        saved={a.id:'persisted-dummy'}
+        self.editor.project=Project(actions=[a])
+        self.editor.credential_store=SimpleNamespace(
+            get=lambda ref:saved.get(ref),
+            set=lambda ref,value:saved.__setitem__(ref,value),
+            delete=lambda ref:saved.pop(ref,None))
+        self.editor.refresh({a.id})
+        self.assertEqual(a.secure_ref,'')
+        self.assertEqual(self.editor._read_saved_secret(a),'persisted-dummy')
+        self.assertTrue(self.editor._prepare_secure_values())
+        self.assertEqual(self.editor.prepared_secure[a.id],'persisted-dummy')
+        self.editor.prepared_secure.clear()
+        self.editor.forget_secure_value()
+        self.assertNotIn(a.id,saved)
+
+    def test_dock_minimizes_to_taskbar_proxy(self):
+        dock=self.editor.dock
+        dock.show()
+        self.qt.processEvents()
+        dock.minimize_to_taskbar()
+        self.qt.processEvents()
+        self.assertTrue(self.editor._dock_taskbar_minimized)
+        self.assertFalse(dock.isVisible())
+        self.assertTrue(self.editor.isMinimized())
+        self.editor.showNormal()
+        self.qt.processEvents()
+        from PySide6.QtTest import QTest
+        QTest.qWait(40)
+        self.assertFalse(self.editor._dock_taskbar_minimized)
+        self.assertTrue(dock.isVisible())
+        dock.hide()
+
+    def test_compact_dock_retains_combined_center_on_resize(self):
+        from PySide6.QtTest import QTest
+        from unittest.mock import patch
+        dock=self.editor.dock
+        old=dock.compact_active
+        try:
+            with patch.object(dock,'_avoid_stealing_focus'), \
+                 patch('action_studio.ui.window_rect',return_value=[400,20,116,64]):
+                dock.show()
+                dock.move(100,120)
+                self.editor.recorder.active=True
+                dock.set_compact_mode(True)
+                dock.sync()
+                QTest.qWait(300)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
+                compact_center=dock.x()+(dock.width()+dock.control_island.width())/2
+                compact_y=dock.y()+dock.height()/2
+                dock.set_compact_mode(False)
+                QTest.qWait(300)
+                dock._dock_geometry_animation.setCurrentTime(
+                    dock._dock_geometry_animation.duration())
+                self.assertAlmostEqual(dock.x()+(dock.width()+dock.control_island.width())/2,
+                                       compact_center,delta=2)
+                self.assertAlmostEqual(dock.y()+dock.height()/2,compact_y,delta=2)
+                self.assertEqual(dock.grip_overlay.x(),dock.x()+8)
+        finally:
+            self.editor.recorder.active=False
+            dock.sync()
             dock.set_compact_mode(old)
             dock.hide()
 
