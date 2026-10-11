@@ -165,6 +165,11 @@ class EditorWaitSmokeTests(unittest.TestCase):
         for name,control in controls:
             with self.subTest(control=name):
                 self.editor.table.selectRow(0)
+                # The playback toolbar is horizontally scrollable on small
+                # windows. Bring each button into view before simulating a
+                # click; sending a synthetic click to an offscreen combo
+                # instead hits blank space and incorrectly clears selection.
+                self.editor.toolbar_scroll.ensureWidgetVisible(control)
                 self.qt.processEvents()
                 self.assertTrue(control.isVisibleTo(self.editor),name)
                 QTest.mouseClick(control,Qt.LeftButton)
