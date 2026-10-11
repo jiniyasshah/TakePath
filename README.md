@@ -65,7 +65,7 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 - Tune individual delays and apply timing changes across selected steps.
 - Use **+ Before** to insert a new action before the selected step, or at the beginning if no step is selected. Click blank editor space to deselect; property controls retain selection so you can edit safely.
 - Show a visual action map when you need to inspect or adjust click positions; hide it to focus on the action list.
-- Save and reopen editable `.vas.json` projects.
+- Save and reopen automatically encrypted editable `.vas.json` projects.
 - Previously saved projects continue to open; projects without recorded window bounds retain their previous screen-coordinate behavior.
 
 ### Protected inputs
@@ -76,8 +76,9 @@ Ever finished a screen-recording take only to notice a typo, an awkward mouse mo
 - Optionally reveal a configured value for verification; values are hidden by default.
 - **Remember securely on this device** is selected by default when a supported OS credential vault is available; session-only storage remains an option. OS-protected values stay on the same computer/account and are not automatically portable.
 - **Use for all auto-fill secure input steps** is an explicit opt-in when multiple protected fields require the same value. Individual steps can still use distinct values.
-- **Export encrypted…** saves a separate portable project with AES-256-GCM-encrypted secure inputs and a user-supplied passphrase (scrypt key derivation). Unlock during replay on another computer. The passphrase is never saved and cannot be recovered if lost.
-- Ordinary project saves never contain plaintext secure input values. Explicit portable encrypted exports include authenticated ciphertext; treat them as sensitive files.
+- **Save, Save As, and Export copy encrypt automatically.** The entire `.vas.json` file—including the action list, typed text, preview image, window metadata, and any configured secure inputs—is encrypted with AES-256-GCM. No project/export passphrase is requested, even for projects with no secure inputs.
+- The random encryption key lives in the local OS credential vault. Reopening or exporting on the **same device and user account** works automatically. Files are **not directly readable on a different device/account** without the associated protected key; TakePath does not offer cloud key sync. Do not delete the OS vault entry if you need old encrypted files.
+- Legacy plain `.vas.json` files can be opened and automatically become encrypted when saved again. If the OS vault is unavailable, Save/Export fails instead of writing sensitive data unencrypted. Older manually passphrase-encrypted exports cannot be silently decrypted by the new device key.
 
 ## Download
 
