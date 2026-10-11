@@ -1913,7 +1913,7 @@ class MainWindow(QMainWindow):
             self.inspector_info.setText(f'{len(rows)} steps selected. Press Delete selected to remove all at once.' if rows else 'Choose a step below or click its marker on the preview.')
             return
         a=self.project.actions[rows[0]]
-        self.inspector_title.setText(a.kind.title()+' action')
+        self.inspector_title.setText(a.kind.replace('_',' ').title()+' action')
         self.inspector_info.setText(a.label()[:120])
         self.updating=True
         controls=[(self.enable,'setChecked',a.enabled),(self.delay,'setValue',a.delay),
