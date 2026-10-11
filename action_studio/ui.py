@@ -1725,7 +1725,7 @@ class MainWindow(QMainWindow):
         self.prepared_secure={}
         self.portable_unlocked={}  # in-memory decrypted secure action IDs
         self._dock_taskbar_minimized=False
-        self._dock_taskbar_mode=True
+        self._dock_taskbar_mode=False
         try:
             self.credential_store=credential_store()
         except CredentialError:
@@ -3621,6 +3621,7 @@ def run():
     app.setStyleSheet(CSS)
     font=app.font();font.setFamily('Segoe UI' if sys.platform=='win32' else ('SF Pro Text' if sys.platform=='darwin' else 'Noto Sans'));font.setPointSize(10);app.setFont(font)
     window=MainWindow()
+    window._dock_taskbar_mode=True
     window.showMinimized()  # establish the persistent taskbar button at launch
     window.dock.show()
     return app.exec()
