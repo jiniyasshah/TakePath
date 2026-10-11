@@ -754,6 +754,8 @@ class ControlDock(QWidget):
         self._no_activate = False
         self._pointer_passthrough = False
         self._capture_exclusion_attempted = False
+        self.compact_active = str(owner.settings.value('dock_compact_active','false')).lower() == 'true'
+        self.control_island = None
         root=V(self,(10,7,10,9),0)
         body=F('dockBody')
         root.addWidget(body,1)
@@ -843,7 +845,8 @@ class ControlDock(QWidget):
         active=QWidget()
         active.setObjectName('dockPage')
         row=H(active,(0,0,0,0),9)
-        row.addWidget(DockDragHandle(self))
+        self.active_handle=DockDragHandle(self)
+        row.addWidget(self.active_handle)
         self.mode_status=L('●  REC','recIndicator')
         self.mode_status.setMinimumWidth(84)
         row.addWidget(self.mode_status)
@@ -868,10 +871,17 @@ class ControlDock(QWidget):
         self.stop=icon_button('stop',owner.stop,'Stop (F8)','stopOrb','#FFFFFF',20)
         row.addWidget(self.stop)
         row.addStretch(1)
-        row.addWidget(self._separator())
-        row.addWidget(icon_button('minus',self.minimize_to_tray,'Minimize to notification area'))
-        row.addWidget(icon_button('close',self.close,'Stop and close'))
+        self.active_separator=self._separator()
+        row.addWidget(self.active_separator)
+        self.active_minimize=icon_button('minus',self.minimize_to_tray,'Minimize to notification area')
+        self.active_close=icon_button('close',self.close,'Stop and close')
+        row.addWidget(self.active_minimize)
+        row.addWidget(self.active_close)
         self.stack.addWidget(active)
+        if sys.platform == 'win32':
+            # Independent native HWND: status stays click-through, controls
+            # are genuinely clickable and nonactivating.
+            self.control_island=DockControlIsland(self)
         self.set_target(self.target_mode)
         self._update_countdown()
         self.place(str(owner.settings.value('dock_location','top')), initially=True)
@@ -1007,6 +1017,11 @@ class ControlDock(QWidget):
         menu.addAction('Open project…',self.owner.open_project)
         menu.addAction('Save project…',self.owner.save)
         menu.addSeparator()
+        compact=menu.addAction('Compact dock during recording / replay')
+        compact.setCheckable(True)
+        compact.setChecked(self.compact_active)
+        compact.toggled.connect(self.set_compact_mode)
+        menu.addSeparator()
         position=menu.addMenu('Dock position')
         for label,mode in [('Top center','top'),('Top left','top-left'),('Top right','top-right'),('Bottom center','bottom')]:
             position.addAction(label,lambda p=mode:self.place(p))
@@ -1032,6 +1047,49 @@ class ControlDock(QWidget):
         self.move(x,y)
         if not initially:
             self.owner.settings.setValue('dock_location',location)
+
+    def set_compact_mode(self, compact):
+        compact=bool(compact)
+        if compact == self.compact_active:
+            return
+        self.compact_active=compact
+        self.owner.settings.setValue('dock_compact_active',compact)
+        self.sync()
+
+    def _sync_control_island(self, active, paused):
+        island=self.control_island
+        if island is None:
+            return
+        if not active or not self.isVisible():
+            island.hide()
+            self.owner.recorder.set_interactive_bounds(None)
+            return
+        island.update_controls(paused, self.compact_active)
+        point=QPoint(self.x()+self.width()-island.width()-7,
+                     self.y()+(self.height()-island.height())//2)
+        if island.pos()!=point:
+            island.move(point)
+        if not island.isVisible():
+            island.show()
+            island.raise_()  # only on transition; never steal target focus
+        # Windows native physical coordinates; pynput runs in screen space.
+        try:
+            self.owner.recorder.set_interactive_bounds(
+                window_rect(int(island.winId())))
+        except Exception:
+            self.owner.recorder.set_interactive_bounds(None)
+
+    def moveEvent(self,event):
+        super().moveEvent(event)
+        if self.control_island is not None and self.control_island.isVisible():
+            self._sync_control_island(True, self.owner.recorder.paused or
+                bool(self.owner.player and self.owner.player.pause_flag.is_set()))
+
+    def hideEvent(self,event):
+        if self.control_island is not None:
+            self.control_island.hide()
+            self.owner.recorder.set_interactive_bounds(None)
+        super().hideEvent(event)
 
     def minimize_to_tray(self):
         if self.owner.tray and self.owner.tray.isVisible():
