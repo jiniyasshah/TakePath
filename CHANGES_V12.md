@@ -1,10 +1,15 @@
-# TakePath 1.2.0 Beta 1
+# TakePath 1.2.0 Beta 2
 
 **Pre-release · Windows primary target · macOS and Linux X11 preview**
 
 TakePath records editable mouse and keyboard actions so you can clean up a take and replay it in the target application. It is **not a video recorder or MP4 exporter**; use OBS or another screen recorder if you need a finished video.
 
-## What's improved
+## New in Beta 2
+
+- **Windows Setup installer:** a normal installation wizard using the existing bundled application. It installs for the current user without requiring Python or administrator access, creates a Start Menu entry and optional desktop shortcut, and supports uninstallation through Windows Installed Apps.
+- **Portable downloads remain:** the standalone Windows EXE and portable ZIP are still available for users who do not want to install the app.
+
+## Improvements from Beta 1
 
 - **More reliable capture:** independent mouse-button handling for overlapping presses and drags, plus repeated typing/backspace/arrow input during held keys.
 - **Safer replay:** playback briefly waits for the original selected window to regain focus between actions. If it does not return, replay stops instead of sending input elsewhere.
@@ -13,6 +18,13 @@ TakePath records editable mouse and keyboard actions so you can clean up a take 
 - **Adaptive visual waiting:** optional visual-settling checks after clicks/navigation to reduce timing problems. The check is bounded and can fall back; it does **not** guarantee DOM readiness, network idle, or that a particular web button is clickable.
 - **Window-relative replay:** new window-scoped recordings remember the target's original bounds and adjust pointer actions if the window is moved or moderately resized. Older projects without an anchor keep their original screen coordinates; screen-wide workflows are unchanged.
 - **Regression fixes:** added tests and fixes for edge-case timeout loops that could hang the test workflow.
+
+## Windows downloads
+
+- **Recommended:** `TakePath-windows-x64-setup.exe` — installs TakePath, adds shortcuts and uninstaller.
+- **Portable:** `TakePath-windows-x64.exe` — run without installing; or `TakePath-windows-x64-portable.zip` — extract the entire folder.
+
+The installer is not code-signed, so Windows SmartScreen may show a warning. Verify you downloaded it from the official GitHub release.
 
 ## How to try the beta
 
